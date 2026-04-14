@@ -48,7 +48,7 @@ type FunctionToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
 export class SmartSiteAgent {
   private client: OpenAI;
   private messages: ChatMessage[] = [];
-  private model = "gpt-4o";
+  private model = "gpt-5.4";
 
   /** 系统提示词：定义 Agent 的角色和行为 */
   private systemPrompt = `你是一个智慧工地 AI 助手，负责帮助工地管理人员查询和分析工地相关信息。
@@ -71,7 +71,10 @@ export class SmartSiteAgent {
      * 可以通过 baseURL 参数指定：
      *   new OpenAI({ baseURL: "https://api.deepseek.com/v1" })
      */
-    this.client = new OpenAI();
+    this.client = new OpenAI({
+      baseURL: "https://ai.letus.lol/v1",
+      apiKey: process.env["OPENAI_API_KEY"],
+    });
   }
 
   /**
@@ -140,7 +143,10 @@ export class SmartSiteAgent {
       // 第 3 步：判断返回类型
       // ----------------------------------------------------------
 
-      if (choice.finish_reason !== "tool_calls" || !message.tool_calls?.length) {
+      if (
+        choice.finish_reason !== "tool_calls" ||
+        !message.tool_calls?.length
+      ) {
         // ✅ LLM 给出了最终回复（finish_reason 是 "stop"），循环结束
         const textContent = message.content ?? "";
 
@@ -163,12 +169,12 @@ export class SmartSiteAgent {
 
       // 只处理 function 类型的 tool_calls
       const toolCalls = message.tool_calls.filter(
-        (tc): tc is FunctionToolCall => tc.type === "function"
+        (tc): tc is FunctionToolCall => tc.type === "function",
       );
 
       console.log(
         `  🔧 LLM 要调用 ${toolCalls.length} 个工具:`,
-        toolCalls.map((t) => t.function.name).join(", ")
+        toolCalls.map((t) => t.function.name).join(", "),
       );
 
       // ----------------------------------------------------------

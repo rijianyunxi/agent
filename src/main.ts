@@ -8,7 +8,7 @@
  *   - 输入 "reset" 重置对话
  *   - 输入 "exit" 退出
  */
-
+import "dotenv/config"
 import { createInterface } from "node:readline";
 
 import { SmartSiteAgent } from "./agent.ts";
