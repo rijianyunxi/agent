@@ -174,14 +174,34 @@ export class SmartSiteAgent {
 
       const toolResults = await Promise.all(
         toolCalls.map(async (toolCall: FunctionToolCall) => {
+          let args: Record<string, unknown>;
+
           try {
-            const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-            const result = await this.toolRegistry!.executeTool(toolCall.function.name, args);
-            return { tool_call_id: toolCall.id, content: result };
-          } catch {
+            args = parseToolArguments(toolCall.function.arguments);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(`  [tool:args:error] ${toolCall.function.name}`, message);
             return {
               tool_call_id: toolCall.id,
-              content: JSON.stringify({ error: '工具参数解析失败，请重试' }),
+              content: JSON.stringify({
+                error: '工具参数解析失败，请检查输入后重试',
+                detail: message,
+              }),
+            };
+          }
+
+          try {
+            const result = await this.toolRegistry!.executeTool(toolCall.function.name, args);
+            return { tool_call_id: toolCall.id, content: result };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(`  [tool:execute:error] ${toolCall.function.name}`, message);
+            return {
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({
+                error: '工具执行失败，请稍后重试',
+                detail: message,
+              }),
             };
           }
         }),
@@ -323,6 +343,20 @@ function isRetryableModelError(error: unknown): boolean {
     || message.includes('econnreset')
     || message.includes('econnrefused')
     || message.includes('fetch failed');
+}
+
+function parseToolArguments(raw: string): Record<string, unknown> {
+  const parsed = JSON.parse(raw) as unknown;
+
+  if (!isRecord(parsed)) {
+    throw new Error('Tool arguments must be a JSON object');
+  }
+
+  return parsed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function serializeMessageContent(message: ChatMessage): string {

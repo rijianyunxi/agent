@@ -6,11 +6,15 @@
 
 ### 1. 增加 session 空闲清理定时器
 
+- 状态：已完成
+
 - 问题：`AgentSessionManager` 虽然实现了 `disposeIdleSessions()`，但服务端没有定时触发，空闲 session 会持续常驻内存。
 - 目标：在 server 启动时注册定时清理任务，周期性释放超时 session，关闭关联 agent 资源。
 - 结果：避免 session 累积导致内存持续增长。
 
 ### 2. 拆分 tool call 错误处理
+
+- 状态：已完成
 
 - 问题：当前 tool call 把参数解析失败和工具执行失败合并到了同一个错误分支，返回信息不准确。
 - 目标：至少区分以下几类错误：
@@ -20,6 +24,8 @@
 - 结果：便于排查问题，也方便后续对不同错误类型做重试或降级。
 
 ### 3. 为 retrieval 增加 embedding 缓存
+
+- 状态：已完成
 
 - 问题：检索时会重复为相同 query 和候选文本生成 embedding，随着对话日志增长，延迟和开销会明显增加。
 - 目标：缓存 query / candidate 的 embedding 结果，避免重复请求 Ollama embedding 接口。
@@ -41,6 +47,8 @@
 
 ### 6. 完善 local-server stdin 错误处理
 
+- 状态：已完成
+
 - 问题：本地 MCP server 对 stdin 请求解析、JSON 反序列化、工具执行异常缺少完整兜底，异常时可能导致进程退出。
 - 目标：为坏包、非法请求、工具异常增加 try/catch 和标准 JSON-RPC 错误响应。
 - 结果：提高本地 MCP server 稳定性，避免单次异常影响整条工具链。
@@ -61,6 +69,8 @@
 - 目标：补全 image tool 的接入、能力定义和必要测试，保证图片场景链路完整可用。
 
 ### 10. 固化 monorepo 包边界约束
+
+- 状态：部分完成
 
 - 问题：虽然已拆出 `shared / memory / tools / mcp / core / server`，但当前边界主要依赖约定，缺少自动化约束。
 - 目标：

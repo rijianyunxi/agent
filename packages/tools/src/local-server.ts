@@ -11,6 +11,11 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
+interface JsonRpcError {
+  code: number;
+  message: string;
+}
+
 interface LocalServerOptions {
   memoryStore: MemoryStore;
   sessionId: string;
@@ -46,37 +51,43 @@ async function main(): Promise<void> {
     ...(process.env['AGENT_USER_SYMBOL'] ? { userSymbol: process.env['AGENT_USER_SYMBOL'] } : {}),
   });
 
-  let buffer = Buffer.alloc(0);
+  let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
   process.stdin.on('data', async (chunk: Buffer) => {
     buffer = Buffer.concat([buffer, chunk]);
 
-    while (true) {
-      const headerEnd = buffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) {
-        break;
+    try {
+      while (true) {
+        const parsedMessage = readNextMessage(buffer);
+        if (!parsedMessage) {
+          break;
+        }
+
+        buffer = parsedMessage.rest;
+
+        try {
+          const request = parseRequestBody(parsedMessage.body);
+          await handleRequest(request, toolMap);
+        } catch (error) {
+          const rpcError = toJsonRpcError(error, -32700, 'Invalid JSON-RPC request');
+          const requestId = getRequestIdFromBody(parsedMessage.body);
+          writeError(requestId, rpcError.code, rpcError.message);
+        }
       }
-
-      const headerText = buffer.subarray(0, headerEnd).toString('utf8');
-      const match = headerText.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        buffer = Buffer.alloc(0);
-        break;
-      }
-
-      const contentLength = Number.parseInt(match[1]!, 10);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + contentLength;
-      if (buffer.length < bodyEnd) {
-        break;
-      }
-
-      const body = buffer.subarray(bodyStart, bodyEnd).toString('utf8');
-      buffer = buffer.subarray(bodyEnd);
-
-      const request = JSON.parse(body) as JsonRpcRequest;
-      await handleRequest(request, toolMap);
+    } catch (error) {
+      const rpcError = toJsonRpcError(error, -32600, 'Malformed stdio frame');
+      buffer = Buffer.alloc(0);
+      writeError(undefined, rpcError.code, rpcError.message);
     }
+  });
+
+  process.stdin.on('error', (error) => {
+    const rpcError = toJsonRpcError(error, -32001, 'stdin stream error');
+    writeError(undefined, rpcError.code, rpcError.message);
+  });
+
+  process.stdout.on('error', (error) => {
+    console.error('[local-mcp:stdout]', error instanceof Error ? error.message : String(error));
   });
 
   process.once('SIGINT', () => {
@@ -135,17 +146,22 @@ async function handleRequest(request: JsonRpcRequest, toolMap: Map<string, Tool>
       return;
     }
 
-    const result = await tool.execute(isObject(args) ? args : {});
-    writeResponse(request.id, {
-      content: [
-        {
-          type: 'text',
-          text: result,
-        },
-      ],
-      structuredContent: safeJsonParse(result),
-      isError: false,
-    });
+    try {
+      const result = await tool.execute(isObject(args) ? args : {});
+      writeResponse(request.id, {
+        content: [
+          {
+            type: 'text',
+            text: result,
+          },
+        ],
+        structuredContent: safeJsonParse(result),
+        isError: false,
+      });
+    } catch (error) {
+      const rpcError = toJsonRpcError(error, -32000, `Tool execution failed: ${toolName}`);
+      writeError(request.id, rpcError.code, rpcError.message);
+    }
     return;
   }
 
@@ -173,6 +189,61 @@ function writeError(id: number | undefined, code: number, message: string): void
 function writeMessage(message: string): void {
   const payload = `Content-Length: ${Buffer.byteLength(message, 'utf8')}\r\n\r\n${message}`;
   process.stdout.write(payload, 'utf8');
+}
+
+function readNextMessage(buffer: Buffer): { body: string; rest: Buffer<ArrayBufferLike> } | null {
+  const headerEnd = buffer.indexOf('\r\n\r\n');
+  if (headerEnd === -1) {
+    return null;
+  }
+
+  const headerText = buffer.subarray(0, headerEnd).toString('utf8');
+  const match = headerText.match(/Content-Length:\s*(\d+)/i);
+  if (!match) {
+    throw new Error('Missing Content-Length header');
+  }
+
+  const contentLength = Number.parseInt(match[1]!, 10);
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    throw new Error('Invalid Content-Length header');
+  }
+
+  const bodyStart = headerEnd + 4;
+  const bodyEnd = bodyStart + contentLength;
+  if (buffer.length < bodyEnd) {
+    return null;
+  }
+
+  return {
+    body: buffer.subarray(bodyStart, bodyEnd).toString('utf8'),
+    rest: buffer.subarray(bodyEnd),
+  };
+}
+
+function parseRequestBody(body: string): JsonRpcRequest {
+  const parsed = JSON.parse(body) as unknown;
+  if (!isObject(parsed)) {
+    throw new Error('JSON-RPC payload must be an object');
+  }
+
+  return parsed as JsonRpcRequest;
+}
+
+function getRequestIdFromBody(body: string): number | undefined {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    return isObject(parsed) && typeof parsed['id'] === 'number' ? parsed['id'] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function toJsonRpcError(error: unknown, fallbackCode: number, fallbackMessage: string): JsonRpcError {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    code: fallbackCode,
+    message: message || fallbackMessage,
+  };
 }
 
 function safeJsonParse(value: string): unknown {

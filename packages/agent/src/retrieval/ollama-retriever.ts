@@ -17,6 +17,7 @@ interface OllamaRetrieverOptions {
   model?: string;
   topK?: number;
   minScore?: number;
+  embeddingCacheSize?: number;
   logger?: Logger;
 }
 
@@ -25,16 +26,19 @@ export class OllamaRetriever {
   private readonly preferredModel: string;
   private readonly topK: number;
   private readonly minScore: number;
+  private readonly embeddingCacheSize: number;
   private readonly logger: Logger;
   private availabilityChecked = false;
   private enabled = false;
   private resolvedModel: string | null = null;
+  private readonly embeddingCache = new Map<string, number[] | null>();
 
   constructor(options: OllamaRetrieverOptions = {}) {
     this.baseUrl = (options.baseUrl ?? process.env['OLLAMA_BASE_URL'] ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
     this.preferredModel = options.model ?? process.env['OLLAMA_EMBED_MODEL'] ?? 'bge-m3';
     this.topK = options.topK ?? 5;
     this.minScore = options.minScore ?? 0.35;
+    this.embeddingCacheSize = options.embeddingCacheSize ?? 512;
     this.logger = options.logger ?? console;
   }
 
@@ -122,6 +126,13 @@ export class OllamaRetriever {
       return null;
     }
 
+    const cacheKey = `${this.resolvedModel}:${text}`;
+    const cached = this.embeddingCache.get(cacheKey);
+    if (cached !== undefined) {
+      this.touchEmbeddingCache(cacheKey, cached);
+      return cached;
+    }
+
     try {
       const response = await fetch(`${this.baseUrl}/api/embeddings`, {
         method: 'POST',
@@ -135,13 +146,35 @@ export class OllamaRetriever {
       });
 
       if (!response.ok) {
+        this.storeEmbeddingCache(cacheKey, null);
         return null;
       }
 
       const payload = (await response.json()) as OllamaEmbeddingsResponse;
-      return Array.isArray(payload.embedding) ? payload.embedding : null;
+      const embedding = Array.isArray(payload.embedding) ? payload.embedding : null;
+      this.storeEmbeddingCache(cacheKey, embedding);
+      return embedding;
     } catch {
+      this.storeEmbeddingCache(cacheKey, null);
       return null;
+    }
+  }
+
+  private touchEmbeddingCache(key: string, value: number[] | null): void {
+    this.embeddingCache.delete(key);
+    this.embeddingCache.set(key, value);
+  }
+
+  private storeEmbeddingCache(key: string, value: number[] | null): void {
+    this.embeddingCache.set(key, value);
+
+    if (this.embeddingCache.size <= this.embeddingCacheSize) {
+      return;
+    }
+
+    const oldestKey = this.embeddingCache.keys().next().value;
+    if (oldestKey) {
+      this.embeddingCache.delete(oldestKey);
     }
   }
 }
