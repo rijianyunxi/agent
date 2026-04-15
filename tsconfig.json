@@ -1,6 +1,10 @@
 {
   "files": [],
   "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/memory" },
+    { "path": "./packages/tools" },
+    { "path": "./packages/mcp" },
     { "path": "./packages/agent" },
     { "path": "./packages/server" }
   ]

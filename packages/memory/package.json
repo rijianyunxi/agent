@@ -1,19 +1,20 @@
 {
-  "name": "@agent/server",
+  "name": "@agent/memory",
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@agent/core": "workspace:*",
     "@agent/shared": "workspace:*",
-    "dotenv": "^17.4.2",
-    "koa": "^2.16.2"
+    "better-sqlite3": "^12.9.0",
+    "openai": "^6.34.0"
   },
   "devDependencies": {
-    "@types/koa": "^2.15.0"
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

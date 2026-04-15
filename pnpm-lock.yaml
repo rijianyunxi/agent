@@ -8,9 +8,6 @@ importers:
 
   .:
     devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
       '@types/node':
         specifier: ^25.6.0
         version: 25.6.0
@@ -23,9 +20,18 @@ importers:
 
   packages/agent:
     dependencies:
-      better-sqlite3:
-        specifier: ^12.9.0
-        version: 12.9.0
+      '@agent/mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@agent/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@agent/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@agent/tools':
+        specifier: workspace:*
+        version: link:../tools
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -33,11 +39,39 @@ importers:
         specifier: ^6.34.0
         version: 6.34.0
 
+  packages/mcp:
+    dependencies:
+      '@agent/shared':
+        specifier: workspace:*
+        version: link:../shared
+      openai:
+        specifier: ^6.34.0
+        version: 6.34.0
+
+  packages/memory:
+    dependencies:
+      '@agent/shared':
+        specifier: workspace:*
+        version: link:../shared
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
+      openai:
+        specifier: ^6.34.0
+        version: 6.34.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+
   packages/server:
     dependencies:
       '@agent/core':
         specifier: workspace:*
         version: link:../agent
+      '@agent/shared':
+        specifier: workspace:*
+        version: link:../shared
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -48,6 +82,21 @@ importers:
       '@types/koa':
         specifier: ^2.15.0
         version: 2.15.0
+
+  packages/shared:
+    dependencies:
+      openai:
+        specifier: ^6.34.0
+        version: 6.34.0
+
+  packages/tools:
+    dependencies:
+      '@agent/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@agent/shared':
+        specifier: workspace:*
+        version: link:../shared
 
 packages:
 

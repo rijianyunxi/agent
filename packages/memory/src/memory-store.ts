@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 
-import type { ConversationLogRecord, MemoryRecord, MemoryScope } from '../types.ts';
+import type { ConversationLogRecord, MemoryRecord, MemoryScope } from '@agent/shared';
 
 interface MemoryStoreOptions {
   dbPath?: string;

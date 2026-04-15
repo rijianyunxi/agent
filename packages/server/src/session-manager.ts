@@ -14,22 +14,27 @@ export interface ChatTurnInput extends SessionInit {
 
 interface SessionEntry {
   agent: SmartSiteAgent;
+  createdAt: number;
   lastAccessAt: number;
+  activeRequests: number;
   pending: Promise<void>;
 }
 
 export interface AgentSessionManagerOptions {
   idleTtlMs?: number;
+  maxLifetimeMs?: number;
   buildAgentOptions?: (input: SessionInit) => AgentCoreOptions;
 }
 
 export class AgentSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
   private readonly idleTtlMs: number;
+  private readonly maxLifetimeMs: number;
   private readonly buildAgentOptions: (input: SessionInit) => AgentCoreOptions;
 
   constructor(options: AgentSessionManagerOptions = {}) {
     this.idleTtlMs = options.idleTtlMs ?? 30 * 60 * 1000;
+    this.maxLifetimeMs = options.maxLifetimeMs ?? 2 * 60 * 60 * 1000;
     this.buildAgentOptions = options.buildAgentOptions ?? ((input) => ({
       ...(input.userId ? { userId: input.userId } : {}),
       ...(input.userSymbol ? { userSymbol: input.userSymbol } : {}),
@@ -40,13 +45,18 @@ export class AgentSessionManager {
     const entry = await this.getOrCreateSession(input);
 
     return await this.enqueue(entry, async () => {
+      entry.activeRequests += 1;
       entry.lastAccessAt = Date.now();
 
-      if (input.reset) {
-        entry.agent.reset();
-      }
+      try {
+        if (input.reset) {
+          entry.agent.reset();
+        }
 
-      return await entry.agent.run(input.message, input.imageUrl);
+        return await entry.agent.run(input.message, input.imageUrl);
+      } finally {
+        entry.activeRequests = Math.max(entry.activeRequests - 1, 0);
+      }
     });
   }
 
@@ -78,7 +88,7 @@ export class AgentSessionManager {
 
   async disposeIdleSessions(now = Date.now()): Promise<number> {
     const expired = [...this.sessions.entries()]
-      .filter(([, entry]) => now - entry.lastAccessAt >= this.idleTtlMs)
+      .filter(([, entry]) => this.shouldDisposeSession(entry, now))
       .map(([sessionId]) => sessionId);
 
     await Promise.all(expired.map(async (sessionId) => {
@@ -103,13 +113,26 @@ export class AgentSessionManager {
     }
 
     const agent = await createAgentCore(this.buildAgentOptions(input));
+    const now = Date.now();
     const entry: SessionEntry = {
       agent,
-      lastAccessAt: Date.now(),
+      createdAt: now,
+      lastAccessAt: now,
+      activeRequests: 0,
       pending: Promise.resolve(),
     };
     this.sessions.set(input.sessionId, entry);
     return entry;
+  }
+
+  private shouldDisposeSession(entry: SessionEntry, now: number): boolean {
+    if (entry.activeRequests > 0) {
+      return false;
+    }
+
+    const idleExpired = now - entry.lastAccessAt >= this.idleTtlMs;
+    const lifetimeExpired = now - entry.createdAt >= this.maxLifetimeMs;
+    return idleExpired || lifetimeExpired;
   }
 
   private async enqueue<T>(entry: SessionEntry, task: () => Promise<T>): Promise<T> {

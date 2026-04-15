@@ -1,9 +1,9 @@
-import type { MemoryStore } from '../memory/index.ts';
-import { MemoryStore as DefaultMemoryStore } from '../memory/index.ts';
-import { attendanceTool } from '../tools/attendance.ts';
-import { inspectionTool } from '../tools/inspection.ts';
-import { createMemoryTools } from '../tools/memory-tools.ts';
-import type { Tool } from '../types.ts';
+import { MemoryStore } from '@agent/memory';
+import type { Tool } from '@agent/shared';
+
+import { attendanceTool } from './attendance.ts';
+import { inspectionTool } from './inspection.ts';
+import { createMemoryTools } from './memory-tools.ts';
 
 interface JsonRpcRequest {
   id?: number;
@@ -34,7 +34,7 @@ export function createLocalMcpToolMap(options: LocalServerOptions): Map<string, 
 }
 
 async function main(): Promise<void> {
-  const memoryStore = new DefaultMemoryStore({
+  const memoryStore = new MemoryStore({
     ...(process.env['MEMORY_DB_PATH'] ? { dbPath: process.env['MEMORY_DB_PATH'] } : {}),
   });
   memoryStore.initialize();
@@ -179,7 +179,7 @@ function safeJsonParse(value: string): unknown {
   try {
     return JSON.parse(value);
   } catch {
-    return { text: value };
+    return { text: value }; 
   }
 }
 

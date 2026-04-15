@@ -72,6 +72,23 @@ export function createServerApp(options: ServerAppOptions = {}): { app: Koa; ses
         return;
       }
 
+      if (ctx.method === 'POST' && ctx.path === '/session/close') {
+        const payload = await readJsonBody(ctx);
+        const sessionId = isRecord(payload) && typeof payload['sessionId'] === 'string'
+          ? payload['sessionId']
+          : null;
+
+        if (!sessionId) {
+          ctx.status = 400;
+          ctx.body = { error: 'sessionId is required' };
+          return;
+        }
+
+        const closed = await sessionManager.disposeSession(sessionId);
+        ctx.body = { sessionId, closed };
+        return;
+      }
+
       ctx.status = 404;
       ctx.body = { error: 'Not Found' };
     } catch (error) {

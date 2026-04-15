@@ -3,16 +3,18 @@ import path from 'node:path';
 
 import OpenAI from 'openai';
 
-import type { MemoryIdentity } from './memory/memory-store.ts';
-import { McpManager } from './mcp/manager.ts';
-import { MemoryStore, SlidingWindow } from './memory/index.ts';
+import { McpManager } from '@agent/mcp';
+import { MemoryStore, SlidingWindow, type MemoryIdentity } from '@agent/memory';
+import { createToolRegistry } from '@agent/tools';
+import type { AgentUserContentPart, Logger } from '@agent/shared';
+
 import { formatRetrievalContext, OllamaRetriever } from './retrieval/ollama-retriever.ts';
-import { createToolRegistry } from './tools/index.ts';
-import type { AgentUserContentPart, Logger } from './types.ts';
 
 type ChatMessage = OpenAI.ChatCompletionMessageParam;
 type FunctionToolCall = OpenAI.ChatCompletionMessageFunctionToolCall;
 type ChatCompletionResponse = Awaited<ReturnType<OpenAI['chat']['completions']['create']>>;
+
+const LOCAL_MCP_SERVER_ENTRY = new URL('../../tools/src/local-server.ts', import.meta.url);
 
 export interface SmartSiteAgentOptions {
   maxIterations?: number;
@@ -50,8 +52,7 @@ export class SmartSiteAgent {
     '- 没有数据时明确说明，不要编造。',
     '- 识别到稳定偏好或长期事实时，可以写入长期记忆。',
   ].join('\n');
-  private sessionId = crypto.randomUUID();
-  private readonly packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  private readonly sessionId = crypto.randomUUID();
   private readonly userId: string | null;
   private readonly userSymbol: string | null;
   private memoryContext: string | null = null;
@@ -79,8 +80,8 @@ export class SmartSiteAgent {
           name: 'local',
           config: {
             command: 'tsx',
-            args: ['src/mcp/local-server.ts'],
-            cwd: this.packageRoot,
+            args: [fileURLToPath(LOCAL_MCP_SERVER_ENTRY)],
+            cwd: path.dirname(fileURLToPath(LOCAL_MCP_SERVER_ENTRY)),
             env: {
               ...(process.env['MEMORY_DB_PATH'] ? { MEMORY_DB_PATH: process.env['MEMORY_DB_PATH'] } : {}),
               ...(this.userId ? { AGENT_USER_ID: this.userId } : {}),

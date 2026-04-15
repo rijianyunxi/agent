@@ -1,4 +1,4 @@
-import type { Logger, Tool } from '../types.ts';
+import type { Logger, Tool } from '@agent/shared';
 
 interface ToolRegistryDeps {
   logger?: Logger;

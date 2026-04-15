@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import type OpenAI from 'openai';
 
 export interface Logger {
   log: (...args: unknown[]) => void;
@@ -52,7 +52,7 @@ export interface AgentInputText {
 
 export type AgentUserContentPart = AgentInputText | AgentInputImageUrl;
 
-export type MemoryScope = "user" | "site" | "global";
+export type MemoryScope = 'user' | 'site' | 'global';
 
 export interface MemoryRecord {
   id: number;
@@ -79,7 +79,7 @@ export interface ConversationLogRecord {
 export interface AttendanceRecord {
   name: string;
   team: string;
-  status: "出勤" | "请假" | "缺勤" | "迟到";
+  status: '出勤' | '请假' | '缺勤' | '迟到';
   checkInTime?: string;
   reason?: string;
 }
@@ -99,7 +99,7 @@ export interface InspectionRecord {
   area: string;
   inspector: string;
   time: string;
-  status: "合格" | "不合格" | "待整改";
+  status: '合格' | '不合格' | '待整改';
   issues: string[];
   images?: string[];
 }

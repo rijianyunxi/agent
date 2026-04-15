@@ -1,19 +1,16 @@
 {
-  "name": "@agent/server",
+  "name": "@agent/mcp",
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@agent/core": "workspace:*",
     "@agent/shared": "workspace:*",
-    "dotenv": "^17.4.2",
-    "koa": "^2.16.2"
-  },
-  "devDependencies": {
-    "@types/koa": "^2.15.0"
+    "openai": "^6.34.0"
   }
 }

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import type OpenAI from 'openai';
 
-import type { Logger, McpConfigFile, McpServerConfig, RuntimeMcpServer, Tool } from '../types.ts';
+import type { Logger, McpConfigFile, McpServerConfig, RuntimeMcpServer, Tool } from '@agent/shared';
 
 interface McpManagerOptions {
   configPath?: string;

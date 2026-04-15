@@ -1,6 +1,5 @@
-import type { MemoryStore } from '../memory/index.ts';
-import type { MemoryIdentity } from '../memory/memory-store.ts';
-import type { Logger, RetrievalCandidate, RetrievalResult } from '../types.ts';
+import type { MemoryIdentity, MemoryStore } from '@agent/memory';
+import type { Logger, RetrievalCandidate, RetrievalResult } from '@agent/shared';
 
 interface OllamaEmbeddingsResponse {
   embedding?: number[];

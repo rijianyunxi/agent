@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "better-sqlite3": "^12.9.0",
+    "@agent/mcp": "workspace:*",
+    "@agent/memory": "workspace:*",
+    "@agent/shared": "workspace:*",
+    "@agent/tools": "workspace:*",
     "dotenv": "^17.4.2",
     "openai": "^6.34.0"
   }

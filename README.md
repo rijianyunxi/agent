@@ -40,7 +40,16 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_EMBED_MODEL=bge-m3
 MCP_CONFIG_PATH=./mcp.servers.json
 MEMORY_DB_PATH=./memory.db
+SESSION_IDLE_TTL_MS=1800000
+SESSION_MAX_LIFETIME_MS=7200000
+SESSION_CLEANUP_INTERVAL_MS=60000
 ```
+
+session 相关变量说明：
+
+- `SESSION_IDLE_TTL_MS`：session 空闲多久后销毁，默认 30 分钟
+- `SESSION_MAX_LIFETIME_MS`：session 最长保留时长，默认 2 小时
+- `SESSION_CLEANUP_INTERVAL_MS`：后台定时清理周期，默认 60 秒
 
 ## 前置检索
 
@@ -56,7 +65,7 @@ MEMORY_DB_PATH=./memory.db
 
 ## MCP 接入与热插拔
 
-MCP 管理器位于 `src/mcp/manager.ts`，当前通过 stdio 启动 MCP server，并在每轮对话开始前刷新配置。
+MCP 管理器位于 `packages/mcp/src/manager.ts`，当前通过 stdio 启动 MCP server，并在每轮对话开始前刷新配置。
 
 注意：当前本地 attendance / inspection / memory tools 也已经改成通过本地 MCP server 暴露。
 也就是说，Agent 侧已经统一为一条 MCP tool call 路径，本地工具和外部工具走的是同一套协议流转。
@@ -108,7 +117,7 @@ pnpm dev
 - `src/agent.ts`: Agent 主循环、检索上下文注入、MCP 刷新
 - `src/tools/index.ts`: 本地工具和动态工具合并注册
 - `src/retrieval/ollama-retriever.ts`: Ollama 检索实现
-- `src/mcp/manager.ts`: MCP stdio client 与热插拔管理
+- `packages/mcp/src/manager.ts`: MCP stdio client 与热插拔管理
 - `src/memory/memory-store.ts`: 长期记忆和对话日志存储
 - `src/memory/sliding-window.ts`: 带 pinned system messages 的窗口管理
 

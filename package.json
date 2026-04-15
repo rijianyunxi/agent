@@ -5,10 +5,9 @@
   "scripts": {
     "dev:agent": "pnpm --filter @agent/core dev",
     "dev:server": "pnpm --filter @agent/server dev",
-    "typecheck": "pnpm --filter @agent/core typecheck && pnpm --filter @agent/server typecheck"
+    "typecheck": "pnpm -r --if-present typecheck"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"
