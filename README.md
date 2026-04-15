@@ -1,118 +1,119 @@
 # 智慧工地 AI Agent
 
-用原生 TypeScript + OpenAI SDK 从零实现的 Agent，不依赖 LangChain / LangGraph，用于学习 Agent 核心原理。
+一个用原生 TypeScript 实现的 Agent 示例项目，当前包含：
 
-## 核心概念
+- 基础 Agent loop
+- 本地工具调用
+- 长期记忆
+- 可选的 Ollama 前置检索
+- 基于 MCP 的动态工具接入
+- MCP 配置热插拔
 
-**Agent 的本质就是一个 while 循环：**
+## 当前能力
 
-```
-用户输入 → LLM（带 tools）→ 要调工具？
-  ├─ 否 → 输出回复，结束
-  └─ 是 → 执行工具 → 结果喂回 LLM → 再判断（循环）
-```
-
-LangChain / LangGraph 封装的核心逻辑就是这个。理解了这个循环，就理解了 Agent。
-
-## 功能
-
-| 功能 | 示例问题 | 对应工具 |
-|------|---------|---------|
-| 考勤查询 | "今天考勤如何" | `query_attendance` |
-| 巡检查询 | "今日巡检情况" / "有哪些不合格项" | `query_inspection` |
-| 图片风险识别 | "图片:./site.jpg 有什么安全隐患" | `analyze_image` + Vision |
-| 多工具联动 | "请假几人，巡检有没有问题" | 自动调用多个工具 |
+- 考勤查询
+- 巡检查询
+- 图片分析
+- 长期记忆读写
+- 前置检索上下文注入
+- MCP 外部工具动态加载
 
 ## 快速开始
 
 ```bash
-# 安装依赖
 pnpm install
-
-# 设置 API Key
-export OPENAI_API_KEY=your-api-key
-
-# 运行
 pnpm dev
 ```
 
-> 如果使用兼容 OpenAI 格式的其他服务（DeepSeek、通义千问等），修改 `src/agent.ts` 中的 `baseURL` 和 `model` 即可。
+启动前至少需要设置：
 
-## 项目结构
-
-```
-src/
-├── main.ts                 # 入口：readline CLI 交互
-├── agent.ts                # ⭐ Agent 核心：agent loop（最值得学习的文件）
-├── types.ts                # 类型定义
-└── tools/
-    ├── index.ts            # 工具注册表 + 分发执行
-    ├── attendance.ts       # 考勤查询工具 + mock 数据
-    ├── inspection.ts       # 巡检查询工具 + mock 数据
-    └── image.ts            # 图片加载（base64 data URL）
+```bash
+OPENAI_API_KEY=your-api-key
 ```
 
-## 关键文件说明
+可选环境变量：
 
-### `agent.ts` — Agent Loop（核心）
-
-这是整个项目最重要的文件。核心逻辑不到 50 行：
-
-1. **构造消息** — 把用户输入（文本/图片）组装成 OpenAI 格式的 message
-2. **调用 LLM** — `chat.completions.create()` 带上 tools 定义
-3. **判断返回** — `finish_reason === "tool_calls"` 还是 `"stop"`
-4. **执行工具** — 解析 `tool_calls`，调用本地函数，收集结果
-5. **循环** — 把工具结果作为 `role: "tool"` 消息追加，再次调用 LLM
-
-### `tools/` — 工具层
-
-每个工具包含两部分：
-- **definition** — JSON Schema，告诉 LLM 这个工具能做什么、接受什么参数
-- **execute()** — 本地执行函数，LLM 决定调用时由 Agent 执行
-
-新增工具只需：
-1. 在 `tools/` 下创建文件，导出 `Tool` 对象
-2. 在 `tools/index.ts` 中注册
-
-## 使用方式
-
-```
-👷 你: 今天考勤如何
-  🤖 第 1 轮调用 LLM...
-  🔧 LLM 要调用 1 个工具: query_attendance
-  🔧 调用工具: query_attendance {}
-  ✅ 工具返回: { "date": "2026-04-14", "totalExpected": 15, ...
-  🤖 第 2 轮调用 LLM...
-  💬 Agent 回复完成
-
-🤖 助手: 今日考勤情况如下：应到15人，实到12人...
-
-👷 你: 图片:./site.jpg 这个工地有什么安全隐患
-  📷 已加载图片: ./site.jpg
-  🤖 第 1 轮调用 LLM...
-  💬 Agent 回复完成
-
-🤖 助手: 从照片中识别到以下安全隐患：1. 有工人未佩戴安全帽...
+```bash
+AGENT_USER_ID=u001
+AGENT_USER_SYMBOL=zhangsan
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_EMBED_MODEL=bge-m3
+MCP_CONFIG_PATH=./mcp.servers.json
+MEMORY_DB_PATH=./memory.db
 ```
 
-## Anthropic vs OpenAI 格式对比
+## 前置检索
 
-如果你想切换到 Anthropic Claude API，主要差异如下：
+前置检索实现位于 `src/retrieval/ollama-retriever.ts`。
 
-| 概念 | OpenAI | Anthropic |
-|------|--------|-----------|
-| SDK | `openai` | `@anthropic-ai/sdk` |
-| 系统提示 | `role: "system"` 消息 | 单独的 `system` 参数 |
-| 工具定义 | `{ type:"function", function:{ name, parameters } }` | `{ name, input_schema }` |
-| LLM 要调工具 | `finish_reason: "tool_calls"` | `stop_reason: "tool_use"` |
-| 工具调用信息 | `message.tool_calls` 数组 | content 中的 `tool_use` block |
-| 工具参数 | JSON 字符串，需 `JSON.parse` | 已解析的对象 |
-| 工具结果返回 | `role: "tool"` + `tool_call_id` | `role: "user"` + `type: "tool_result"` |
-| 图片传入 | `image_url` + data URL | `image` block + base64 source |
+行为规则：
 
-## 技术栈
+- 如果本地 Ollama 不可用，则自动关闭检索。
+- 如果 Ollama 可用但没有 `bge-m3` 或 `bge-m3:*` 这类模型，也会自动关闭检索。
+- 只有在可用时，才会把记忆和历史对话做向量召回，并将结果作为额外 system context 注入。
 
-- **TypeScript** — 严格模式
-- **OpenAI SDK** — `openai`
-- **tsx** — 直接运行 TS，无需编译
-- **pnpm** — 包管理
+这意味着你不需要为“没装模型”的环境额外改代码，直接跑即可。
+
+## MCP 接入与热插拔
+
+MCP 管理器位于 `src/mcp/manager.ts`，当前通过 stdio 启动 MCP server，并在每轮对话开始前刷新配置。
+
+注意：当前本地 attendance / inspection / memory tools 也已经改成通过本地 MCP server 暴露。
+也就是说，Agent 侧已经统一为一条 MCP tool call 路径，本地工具和外部工具走的是同一套协议流转。
+
+使用方式：
+
+1. 复制 `mcp.servers.example.json` 为 `mcp.servers.json`
+2. 填入你的 MCP server 启动命令
+3. 下一轮对话时 agent 会自动重载配置
+
+示例：
+
+```json
+{
+  servers: {
+    example: {
+      command: node,
+      args: [./path/to/mcp-server.js],
+      cwd: .,
+      enabled: true
+    }
+  }
+}
+```
+
+热插拔当前的语义是：
+
+- 修改 `mcp.servers.json`
+- 不需要重启进程
+- 下一次 `agent.run()` 前会刷新配置、重建动态工具集
+
+## CLI 使用
+
+直接运行：
+
+```bash
+pnpm dev
+```
+
+输入格式：
+
+- 普通对话：直接输入文本
+- 图片分析：`图片:./site.jpg 这张图有什么风险`
+- 重置会话：`reset`
+- 退出：`exit`
+
+## 关键文件
+
+- `src/agent.ts`: Agent 主循环、检索上下文注入、MCP 刷新
+- `src/tools/index.ts`: 本地工具和动态工具合并注册
+- `src/retrieval/ollama-retriever.ts`: Ollama 检索实现
+- `src/mcp/manager.ts`: MCP stdio client 与热插拔管理
+- `src/memory/memory-store.ts`: 长期记忆和对话日志存储
+- `src/memory/sliding-window.ts`: 带 pinned system messages 的窗口管理
+
+## 验证
+
+```bash
+pnpm exec tsc --noEmit
+```

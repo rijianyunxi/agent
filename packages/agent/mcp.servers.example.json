@@ -1,0 +1,10 @@
+{
+  servers: {
+    example: {
+      command: node,
+      args: [./path/to/mcp-server.js],
+      cwd: .,
+      enabled: false
+    }
+  }
+}

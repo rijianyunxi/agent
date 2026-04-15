@@ -1,23 +1,16 @@
 {
-  "name": "agent",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "dev": "tsx src/main.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "name": "agent-workspace",
+  "private": true,
   "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev:agent": "pnpm --filter @agent/core dev",
+    "dev:server": "pnpm --filter @agent/server dev",
+    "typecheck": "pnpm --filter @agent/core typecheck && pnpm --filter @agent/server typecheck"
+  },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2"
-  },
-  "dependencies": {
-    "dotenv": "^17.4.2",
-    "openai": "^6.34.0"
   }
 }
