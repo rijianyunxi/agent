@@ -4,3 +4,5 @@ dist/
 .env.*
 .claude/
 *.log
+.pnpm-store/
+*.db
