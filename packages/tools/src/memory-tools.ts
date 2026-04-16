@@ -9,6 +9,9 @@ interface MemoryToolsDeps {
 }
 
 const SCOPE_ENUM = ['user', 'site', 'global'] as const;
+const MAX_MEMORY_KEY_LENGTH = 64;
+const MAX_MEMORY_VALUE_LENGTH = 500;
+const MEMORY_KEY_PATTERN = /^(user|site|global)\.[a-z0-9_.-]+$/;
 
 export function createMemoryTools({
   memoryStore,
@@ -51,8 +54,8 @@ export function createMemoryTools({
       },
       async execute(input: Record<string, unknown>): Promise<string> {
         const scope = input['scope'] as MemoryScope;
-        const key = input['key'] as string;
-        const value = input['value'] as string;
+        const key = validateMemoryKey(input['key']);
+        const value = validateMemoryValue(input['value']);
 
         memoryStore.upsertMemory(scope, key, value, sessionId, identity);
         return JSON.stringify({ status: 'ok', action: 'remembered', scope, key, value });
@@ -83,7 +86,7 @@ export function createMemoryTools({
       },
       async execute(input: Record<string, unknown>): Promise<string> {
         const scope = input['scope'] as MemoryScope;
-        const key = input['key'] as string;
+        const key = validateMemoryKey(input['key']);
         const deleted = memoryStore.deleteMemory(scope, key, identity);
 
         return JSON.stringify({ status: 'ok', action: 'forgotten', scope, key, deleted });
@@ -116,4 +119,45 @@ export function createMemoryTools({
       },
     },
   ];
+}
+
+export function validateMemoryKey(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('记忆键名必须是字符串');
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_MEMORY_KEY_LENGTH || !MEMORY_KEY_PATTERN.test(trimmed)) {
+    throw new Error('记忆键名不合法');
+  }
+
+  return trimmed;
+}
+
+export function validateMemoryValue(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error('记忆内容必须是字符串');
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_MEMORY_VALUE_LENGTH) {
+    throw new Error('记忆内容过长或为空');
+  }
+
+  if (containsSensitivePattern(trimmed)) {
+    throw new Error('记忆内容疑似包含敏感信息');
+  }
+
+  return trimmed;
+}
+
+function containsSensitivePattern(value: string): boolean {
+  const patterns = [
+    /\b1\d{10}\b/,
+    /\b\d{15,18}[0-9Xx]\b/,
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
+    /\b(sk|rk)-[A-Za-z0-9_-]{16,}\b/,
+  ];
+
+  return patterns.some((pattern) => pattern.test(value));
 }

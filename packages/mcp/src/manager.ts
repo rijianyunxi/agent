@@ -102,7 +102,6 @@ export class McpManager {
       return;
     }
 
-    this.configSignature = nextSignature;
     await this.close();
 
     const enabledServers = [
@@ -110,6 +109,7 @@ export class McpManager {
       ...this.runtimeServers.map((server) => [server.name, server.config] as const),
     ].filter(([, server]) => server.enabled !== false);
 
+    let hadFailures = false;
     const clients = await Promise.all(
       enabledServers.map(async ([name, server]) => {
         const client = new McpServerClient(name, server, this.logger);
@@ -117,6 +117,7 @@ export class McpManager {
           await client.connect();
           return client;
         } catch (error) {
+          hadFailures = true;
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error(`  [mcp:error] ${name}`, message);
           await client.close();
@@ -127,6 +128,7 @@ export class McpManager {
 
     this.clients = clients.filter((client): client is McpServerClient => client !== null);
     this.tools = this.clients.flatMap((client) => client.getTools());
+    this.configSignature = hadFailures ? null : nextSignature;
 
     if (enabledServers.length > 0) {
       this.logger.log(`  [mcp] Config refreshed, ${enabledServers.length} server(s), ${this.tools.length} tool(s)`);
@@ -187,6 +189,7 @@ class McpServerClient {
   private readonly logger: Logger;
   private readonly requestTimeoutMs = 20000;
   private reconnectPromise: Promise<void> | null = null;
+  private closed = false;
   private process: ChildProcessWithoutNullStreams | null = null;
   private nextRequestId = 1;
   private buffer = Buffer.alloc(0);
@@ -203,6 +206,7 @@ class McpServerClient {
   }
 
   async connect(): Promise<void> {
+    this.closed = false;
     this.process = spawn(this.config.command, this.config.args ?? [], {
       cwd: this.config.cwd,
       env: {
@@ -278,6 +282,7 @@ class McpServerClient {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.rejectAll(new Error(`MCP server ${this.serverName} closed`));
 
     if (!this.process) {
@@ -312,7 +317,7 @@ class McpServerClient {
           name: tool.name,
           arguments: input,
         }, true);
-        return JSON.stringify(result);
+        return formatMcpToolCallResult(result);
       },
     };
   }
@@ -355,7 +360,45 @@ class McpServerClient {
         },
       });
 
-      this.process?.stdin.write(payload, 'utf8');
+      const processRef = this.process;
+      if (!processRef) {
+        this.pending.delete(id);
+        clearTimeout(timeout);
+        reject(new Error(`MCP server unavailable: ${this.serverName}`));
+        return;
+      }
+
+      try {
+        processRef.stdin.write(payload, 'utf8', (error) => {
+          if (!error) {
+            return;
+          }
+
+          const pending = this.pending.get(id);
+          if (!pending) {
+            return;
+          }
+
+          this.pending.delete(id);
+          clearTimeout(timeout);
+          if (reconnectOnFailure) {
+            void this.reconnect().catch((reconnectError) => {
+              const message = reconnectError instanceof Error ? reconnectError.message : String(reconnectError);
+              this.logger.error(`  [mcp:${this.serverName}:reconnect] ${message}`);
+            });
+          }
+          pending.reject(error instanceof Error ? error : new Error(String(error)));
+        });
+      } catch (error) {
+        const pending = this.pending.get(id);
+        if (!pending) {
+          return;
+        }
+
+        this.pending.delete(id);
+        clearTimeout(timeout);
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -394,9 +437,20 @@ class McpServerClient {
 
       const body = this.buffer.subarray(bodyStart, bodyEnd).toString('utf8');
       this.buffer = this.buffer.subarray(bodyEnd);
-
-      const message = JSON.parse(body) as JsonRpcResponse<unknown>;
-      this.handleMessage(message);
+      try {
+        const message = JSON.parse(body) as JsonRpcResponse<unknown>;
+        this.handleMessage(message);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`  [mcp:${this.serverName}:protocol] ${message}`);
+        this.buffer = Buffer.alloc(0);
+        this.rejectAll(new Error(`MCP protocol error: ${this.serverName}`));
+        void this.reconnect().catch((reconnectError) => {
+          const reconnectMessage = reconnectError instanceof Error ? reconnectError.message : String(reconnectError);
+          this.logger.error(`  [mcp:${this.serverName}:reconnect] ${reconnectMessage}`);
+        });
+        return;
+      }
     }
   }
 
@@ -426,6 +480,10 @@ class McpServerClient {
   }
 
   private async reconnect(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+
     if (this.reconnectPromise) {
       await this.reconnectPromise;
       return;
@@ -455,4 +513,50 @@ function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function formatMcpToolCallResult(result: McpToolCallResult): string {
+  const extractedText = Array.isArray(result.content)
+    ? result.content
+      .map((item) => extractMcpContentText(item))
+      .filter((value): value is string => Boolean(value))
+      .join('\n')
+    : '';
+
+  if (result.isError) {
+    if (extractedText) {
+      return JSON.stringify({ error: extractedText });
+    }
+
+    if (result.structuredContent !== undefined) {
+      return JSON.stringify({ error: result.structuredContent });
+    }
+
+    return JSON.stringify({ error: result });
+  }
+
+  if (Array.isArray(result.content)) {
+    if (extractedText) {
+      return extractedText;
+    }
+  }
+
+  if (result.structuredContent !== undefined) {
+    return JSON.stringify(result.structuredContent);
+  }
+
+  return JSON.stringify(result);
+}
+
+function extractMcpContentText(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return typeof value === 'string' ? value : null;
+  }
+
+  const item = value as Record<string, unknown>;
+  if (item['type'] === 'text' && typeof item['text'] === 'string') {
+    return item['text'];
+  }
+
+  return JSON.stringify(item);
 }

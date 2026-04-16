@@ -18,6 +18,7 @@ interface OllamaRetrieverOptions {
   topK?: number;
   minScore?: number;
   embeddingCacheSize?: number;
+  availabilityRetryMs?: number;
   logger?: Logger;
 }
 
@@ -27,10 +28,11 @@ export class OllamaRetriever {
   private readonly topK: number;
   private readonly minScore: number;
   private readonly embeddingCacheSize: number;
+  private readonly availabilityRetryMs: number;
   private readonly logger: Logger;
-  private availabilityChecked = false;
   private enabled = false;
   private resolvedModel: string | null = null;
+  private nextAvailabilityCheckAt = 0;
   private readonly embeddingCache = new Map<string, number[] | null>();
 
   constructor(options: OllamaRetrieverOptions = {}) {
@@ -39,6 +41,7 @@ export class OllamaRetriever {
     this.topK = options.topK ?? 5;
     this.minScore = options.minScore ?? 0.35;
     this.embeddingCacheSize = options.embeddingCacheSize ?? 512;
+    this.availabilityRetryMs = options.availabilityRetryMs ?? 30_000;
     this.logger = options.logger ?? console;
   }
 
@@ -85,15 +88,18 @@ export class OllamaRetriever {
   }
 
   private async ensureAvailability(): Promise<boolean> {
-    if (this.availabilityChecked) {
-      return this.enabled;
+    if (this.enabled) {
+      return true;
     }
 
-    this.availabilityChecked = true;
+    if (Date.now() < this.nextAvailabilityCheckAt) {
+      return false;
+    }
 
     try {
       const response = await fetch(`${this.baseUrl}/api/tags`);
       if (!response.ok) {
+        this.scheduleAvailabilityRetry();
         this.logger.log('  [retrieval] Ollama probe failed, retrieval disabled');
         return false;
       }
@@ -107,18 +113,27 @@ export class OllamaRetriever {
         ?? modelNames.find((name) => name.includes('bge-m3'));
 
       if (!matchedModel) {
+        this.scheduleAvailabilityRetry();
         this.logger.log('  [retrieval] No local bge-m3-like model found, retrieval disabled');
         return false;
       }
 
       this.resolvedModel = matchedModel;
       this.enabled = true;
+      this.nextAvailabilityCheckAt = 0;
       this.logger.log(`  [retrieval] Enabled with model ${matchedModel}`);
       return true;
     } catch {
+      this.scheduleAvailabilityRetry();
       this.logger.log('  [retrieval] Ollama unavailable, retrieval disabled');
       return false;
     }
+  }
+
+  private scheduleAvailabilityRetry(): void {
+    this.enabled = false;
+    this.resolvedModel = null;
+    this.nextAvailabilityCheckAt = Date.now() + this.availabilityRetryMs;
   }
 
   private async embed(text: string): Promise<number[] | null> {
@@ -198,11 +213,12 @@ function getCandidates(memoryStore: MemoryStore, identity: MemoryIdentity): Retr
     content: `[${memory.scope}] ${memory.key}: ${memory.value}`,
   }));
   const logs = memoryStore.listConversationLogs(undefined, identity)
+    .filter((log) => log.role === 'user' || log.role === 'assistant')
     .slice(-120)
     .map((log) => ({
       id: `conversation:${log.id}`,
       source: `conversation/${log.role}`,
-      content: `[${log.role}] ${log.content}`,
+      content: `[${log.role}] ${truncateForRetrieval(log.content, 500)}`,
     }));
 
   return [...memories, ...logs];
@@ -231,4 +247,12 @@ function cosineSimilarity(left: number[], right: number[]): number {
   }
 
   return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+}
+
+function truncateForRetrieval(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength)}...`;
 }

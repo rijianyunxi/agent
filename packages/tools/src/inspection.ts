@@ -1,6 +1,10 @@
 import type { InspectionRecord, InspectionSummary, Tool } from '@agent/shared';
 
-const today = new Date().toISOString().split('T')[0]!;
+export function getTodayInLocalTimezone(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: process.env['TZ'],
+  }).format(new Date());
+}
 
 const mockRecords: InspectionRecord[] = [
   { id: 'INS-2024-001', area: 'A栋基坑', inspector: '安全员-李明', time: '08:30', status: '合格', issues: [] },
@@ -11,7 +15,7 @@ const mockRecords: InspectionRecord[] = [
 ];
 
 function queryInspection(date?: string, status?: string): InspectionSummary {
-  const queryDate = date ?? today;
+  const queryDate = date ?? getTodayInLocalTimezone();
   let records = [...mockRecords];
 
   if (status) {

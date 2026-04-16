@@ -1,6 +1,10 @@
 import type { AttendanceRecord, AttendanceSummary, Tool } from '@agent/shared';
 
-const today = new Date().toISOString().split('T')[0]!;
+export function getTodayInLocalTimezone(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: process.env['TZ'],
+  }).format(new Date());
+}
 
 const mockRecords: AttendanceRecord[] = [
   { name: '张伟', team: '钢筋班', status: '出勤', checkInTime: '07:32' },
@@ -21,7 +25,7 @@ const mockRecords: AttendanceRecord[] = [
 ];
 
 function queryAttendance(date?: string): AttendanceSummary {
-  const queryDate = date ?? today;
+  const queryDate = date ?? getTodayInLocalTimezone();
   const records = mockRecords;
 
   return {

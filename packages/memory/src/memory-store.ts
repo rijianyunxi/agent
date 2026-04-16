@@ -105,24 +105,39 @@ export class MemoryStore {
   ): void {
     const db = this.getDb();
     const timestamp = Date.now();
+    const existingRows = db.prepare(
+      `SELECT id FROM memories
+       WHERE scope = ? AND key = ?
+         AND user_id IS ? AND user_symbol IS ?
+       ORDER BY id DESC`,
+    ).all(scope, key, identity.userId, identity.userSymbol) as Array<{ id: number }>;
 
-    db.prepare(`
-      INSERT INTO memories (session_id, user_id, user_symbol, scope, key, value, created_at, updated_at)
-      VALUES (@session_id, @user_id, @user_symbol, @scope, @key, @value, @created_at, @updated_at)
-      ON CONFLICT(user_id, user_symbol, scope, key) DO UPDATE SET
-        session_id = excluded.session_id,
-        value = excluded.value,
-        updated_at = excluded.updated_at
-    `).run({
-      session_id: sessionId,
-      user_id: identity.userId,
-      user_symbol: identity.userSymbol,
-      scope,
-      key,
-      value,
-      created_at: timestamp,
-      updated_at: timestamp,
+    const writeMemory = db.transaction(() => {
+      if (existingRows.length > 0) {
+        const [latest, ...duplicates] = existingRows;
+
+        db.prepare(
+          `UPDATE memories
+           SET session_id = ?, value = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(sessionId, value, timestamp, latest!.id);
+
+        if (duplicates.length > 0) {
+          const duplicateIds = duplicates.map((row) => row.id);
+          const placeholders = duplicateIds.map(() => '?').join(', ');
+          db.prepare(`DELETE FROM memories WHERE id IN (${placeholders})`).run(...duplicateIds);
+        }
+
+        return;
+      }
+
+      db.prepare(
+        `INSERT INTO memories (session_id, user_id, user_symbol, scope, key, value, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(sessionId, identity.userId, identity.userSymbol, scope, key, value, timestamp, timestamp);
     });
+
+    writeMemory();
   }
 
   deleteMemory(
@@ -180,12 +195,14 @@ export class MemoryStore {
     role: string,
     content: string,
     identity: MemoryIdentity = { userId: null, userSymbol: null },
-  ): void {
+  ): number {
     const db = this.getDb();
-    db.prepare(
+    const result = db.prepare(
       `INSERT INTO conversation_log (session_id, user_id, user_symbol, role, content, timestamp)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(sessionId, identity.userId, identity.userSymbol, role, content, Date.now());
+
+    return Number(result.lastInsertRowid);
   }
 
   listConversationLogs(
@@ -206,6 +223,43 @@ export class MemoryStore {
         ).all(identity.userId, identity.userSymbol) as ConversationLogRow[]);
 
     return rows.map(mapConversationLogRow);
+  }
+
+  getLatestConversationLogId(
+    sessionId: string,
+    identity: MemoryIdentity = { userId: null, userSymbol: null },
+  ): number | null {
+    const db = this.getDb();
+    const row = db.prepare(
+      `SELECT id FROM conversation_log
+       WHERE session_id = ? AND user_id IS ? AND user_symbol IS ?
+       ORDER BY id DESC
+       LIMIT 1`,
+    ).get(sessionId, identity.userId, identity.userSymbol) as { id: number } | undefined;
+
+    return row?.id ?? null;
+  }
+
+  deleteConversationLogsAfter(
+    sessionId: string,
+    afterId: number | null,
+    identity: MemoryIdentity = { userId: null, userSymbol: null },
+  ): void {
+    const db = this.getDb();
+
+    if (afterId === null) {
+      db.prepare(
+        `DELETE FROM conversation_log
+         WHERE session_id = ? AND user_id IS ? AND user_symbol IS ?`,
+      ).run(sessionId, identity.userId, identity.userSymbol);
+      return;
+    }
+
+    db.prepare(
+      `DELETE FROM conversation_log
+       WHERE session_id = ? AND user_id IS ? AND user_symbol IS ?
+         AND id > ?`,
+    ).run(sessionId, identity.userId, identity.userSymbol, afterId);
   }
 
   close(): void {

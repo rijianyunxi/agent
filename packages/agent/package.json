@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {
     "@agent/mcp": "workspace:*",

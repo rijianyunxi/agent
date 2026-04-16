@@ -1,5 +1,9 @@
 import { createInterface } from 'node:readline';
+import { stat } from 'node:fs/promises';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { loadImageAsDataURL } from '@agent/tools';
 
 import type { SmartSiteAgentOptions } from './agent.ts';
 import { SmartSiteAgent } from './agent.ts';
@@ -12,16 +16,49 @@ export interface ParsedInput {
 export type AgentCoreOptions = SmartSiteAgentOptions;
 
 export function parseInput(raw: string): ParsedInput {
-  const imageMatch = raw.match(/^image:(\S+)\s*(.*)$/s);
+  const imageMatch = raw.match(/^image:(?:"([^"]+)"|'([^']+)'|(\S+))\s*(.*)$/s);
 
   if (imageMatch) {
+    const imageUrl = imageMatch[1] ?? imageMatch[2] ?? imageMatch[3];
     return {
-      imageUrl: imageMatch[1]!,
-      text: imageMatch[2] || 'Please analyze this construction-site image for risks and issues.',
+      text: imageMatch[4] || 'Please analyze this construction-site image for risks and issues.',
+      ...(imageUrl ? { imageUrl } : {}),
     };
   }
 
   return { text: raw };
+}
+
+export async function resolveCliImageInput(imageUrl?: string): Promise<string | undefined> {
+  if (!imageUrl) {
+    return undefined;
+  }
+
+  const trimmed = imageUrl.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (trimmed.startsWith('data:image/')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return trimmed;
+    }
+  } catch {
+    // treat as local path
+  }
+
+  const localPath = path.resolve(trimmed);
+  const info = await stat(localPath);
+  if (!info.isFile()) {
+    throw new Error(`图片路径不是文件: ${localPath}`);
+  }
+
+  return await loadImageAsDataURL(localPath);
 }
 
 export function resolveAgentOptions(overrides: AgentCoreOptions = {}): AgentCoreOptions {
@@ -125,7 +162,8 @@ async function runCli(): Promise<void> {
 
       try {
         const { text, imageUrl } = parseInput(trimmed);
-        const reply = await agent.run(text, imageUrl);
+        const resolvedImage = await resolveCliImageInput(imageUrl);
+        const reply = await agent.run(text, resolvedImage);
         console.log('');
         console.log('agent> ' + reply);
         console.log('');

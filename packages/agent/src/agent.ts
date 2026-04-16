@@ -58,6 +58,8 @@ export class SmartSiteAgent {
   private memoryContext: string | null = null;
   private retrievalContext: string | null = null;
   private toolRegistry: ToolRegistry | null = null;
+  private lastToolProgressSignature: string | null = null;
+  private repeatedToolProgressCount = 0;
 
   constructor(options: SmartSiteAgentOptions = {}) {
     this.maxIterations = options.maxIterations ?? 10;
@@ -120,105 +122,155 @@ export class SmartSiteAgent {
       logger: this.logger,
       dynamicTools: this.mcpManager.getTools(),
     });
+    if (this.toolRegistry.toolDefinitions.length === 0 && requiresTooling(userText)) {
+      return '当前数据工具暂不可用，请稍后重试。';
+    }
+
     await this.refreshRetrievalContext(userText);
+    const windowSnapshot = this.window.getMessages();
+    const conversationLogMarker = this.memoryStore.getLatestConversationLogId(this.sessionId, this.getIdentity());
 
-    if (Array.isArray(image) && image.length > 0) {
-      this.appendMessage({
-        role: 'user',
-        content: normalizeUserContent(userText, image),
-      });
-    } else if (typeof image === 'string' && image.length > 0) {
-      this.appendMessage({
-        role: 'user',
-        content: normalizeUserContent(userText, [
-          {
-            type: 'image_url',
-            image_url: { url: image },
-          },
-        ]),
-      });
-    } else {
-      this.appendMessage({ role: 'user', content: userText });
+    try {
+      if (Array.isArray(image) && image.length > 0) {
+        this.appendMessage({
+          role: 'user',
+          content: normalizeUserContent(userText, image),
+        });
+      } else if (typeof image === 'string' && image.length > 0) {
+        this.appendMessage({
+          role: 'user',
+          content: normalizeUserContent(userText, [
+            {
+              type: 'image_url',
+              image_url: { url: image },
+            },
+          ]),
+        });
+      } else {
+        this.appendMessage({ role: 'user', content: userText });
+      }
+
+      for (let iteration = 0; iteration < this.maxIterations; iteration += 1) {
+        this.logger.log(`\n  [agent] Iteration ${iteration + 1}`);
+
+        const response = await this.callModelWithRetry({
+          model: this.model,
+          tools: this.toolRegistry.toolDefinitions,
+          messages: this.window.getMessages(),
+        });
+
+        const choice = response.choices[0];
+        if (!choice) {
+          return '抱歉，当前没有拿到模型返回结果。';
+        }
+
+        const message = choice.message;
+        if (choice.finish_reason !== 'tool_calls' || !message.tool_calls?.length) {
+          this.lastToolProgressSignature = null;
+          this.repeatedToolProgressCount = 0;
+          const finalReply = resolveFinalReply(choice.finish_reason, message.content);
+          this.appendMessage({ role: 'assistant', content: finalReply });
+          return finalReply;
+        }
+
+        if (choice.finish_reason !== 'tool_calls') {
+          this.lastToolProgressSignature = null;
+          this.repeatedToolProgressCount = 0;
+          const finalReply = resolveFinalReply(choice.finish_reason, message.content);
+          this.appendMessage({ role: 'assistant', content: finalReply });
+          return finalReply;
+        }
+
+        this.appendMessage({
+          role: 'assistant',
+          content: message.content,
+          tool_calls: message.tool_calls,
+        });
+
+        const toolCalls = message.tool_calls.filter(
+          (toolCall): toolCall is FunctionToolCall => toolCall.type === 'function',
+        );
+
+        const toolResults = await Promise.all(
+          toolCalls.map(async (toolCall: FunctionToolCall) => {
+            let args: Record<string, unknown>;
+
+            try {
+              args = parseToolArguments(toolCall.function.arguments);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              this.logger.error(`  [tool:args:error] ${toolCall.function.name}`, message);
+              return {
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: '工具参数解析失败，请检查输入后重试',
+                  detail: message,
+                }),
+              };
+            }
+
+            try {
+              const result = await this.toolRegistry!.executeTool(toolCall.function.name, args);
+              return { tool_call_id: toolCall.id, content: result };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              this.logger.error(`  [tool:execute:error] ${toolCall.function.name}`, message);
+              return {
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: '工具执行失败，请稍后重试',
+                  detail: message,
+                }),
+              };
+            }
+          }),
+        );
+
+        toolResults.forEach(({ tool_call_id, content }: { tool_call_id: string; content: string }) => {
+          this.appendMessage({ role: 'tool', tool_call_id, content });
+        });
+
+        if (toolResults.every(({ content }) => isToolErrorContent(content))) {
+          this.lastToolProgressSignature = null;
+          this.repeatedToolProgressCount = 0;
+          const reply = '抱歉，当前数据工具执行失败，请稍后重试。';
+          this.appendMessage({ role: 'assistant', content: reply });
+          return reply;
+        }
+
+        const progressSignature = buildToolProgressSignature(toolCalls, toolResults);
+        if (progressSignature === this.lastToolProgressSignature) {
+          this.repeatedToolProgressCount += 1;
+        } else {
+          this.lastToolProgressSignature = progressSignature;
+          this.repeatedToolProgressCount = 0;
+        }
+
+        if (this.repeatedToolProgressCount >= 1) {
+          this.lastToolProgressSignature = null;
+          this.repeatedToolProgressCount = 0;
+          const reply = '抱歉，工具调用结果重复且没有新的进展，请稍后重试或换个问法。';
+          this.appendMessage({ role: 'assistant', content: reply });
+          return reply;
+        }
+
+        const latestMemoryContext = this.memoryStore.formatMemoryContext(['global', 'user', 'site'], this.getIdentity());
+        if (latestMemoryContext !== this.memoryContext) {
+          this.memoryContext = latestMemoryContext;
+          this.rebuildWindow();
+        }
+      }
+
+      this.lastToolProgressSignature = null;
+      this.repeatedToolProgressCount = 0;
+      return '抱歉，处理轮次过多，请简化您的问题。';
+    } catch (error) {
+      this.lastToolProgressSignature = null;
+      this.repeatedToolProgressCount = 0;
+      this.window.initialize(windowSnapshot);
+      this.memoryStore.deleteConversationLogsAfter(this.sessionId, conversationLogMarker, this.getIdentity());
+      throw error;
     }
-
-    for (let iteration = 0; iteration < this.maxIterations; iteration += 1) {
-      this.logger.log(`\n  [agent] Iteration ${iteration + 1}`);
-
-      const response = await this.callModelWithRetry({
-        model: this.model,
-        tools: this.toolRegistry.toolDefinitions,
-        messages: this.window.getMessages(),
-      });
-
-      const choice = response.choices[0];
-      if (!choice) {
-        return '抱歉，当前没有拿到模型返回结果。';
-      }
-
-      const message = choice.message;
-      if (choice.finish_reason !== 'tool_calls' || !message.tool_calls?.length) {
-        const textContent = message.content ?? '';
-        this.appendMessage({ role: 'assistant', content: textContent });
-        return textContent;
-      }
-
-      this.appendMessage({
-        role: 'assistant',
-        content: message.content,
-        tool_calls: message.tool_calls,
-      });
-
-      const toolCalls = message.tool_calls.filter(
-        (toolCall): toolCall is FunctionToolCall => toolCall.type === 'function',
-      );
-
-      const toolResults = await Promise.all(
-        toolCalls.map(async (toolCall: FunctionToolCall) => {
-          let args: Record<string, unknown>;
-
-          try {
-            args = parseToolArguments(toolCall.function.arguments);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(`  [tool:args:error] ${toolCall.function.name}`, message);
-            return {
-              tool_call_id: toolCall.id,
-              content: JSON.stringify({
-                error: '工具参数解析失败，请检查输入后重试',
-                detail: message,
-              }),
-            };
-          }
-
-          try {
-            const result = await this.toolRegistry!.executeTool(toolCall.function.name, args);
-            return { tool_call_id: toolCall.id, content: result };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(`  [tool:execute:error] ${toolCall.function.name}`, message);
-            return {
-              tool_call_id: toolCall.id,
-              content: JSON.stringify({
-                error: '工具执行失败，请稍后重试',
-                detail: message,
-              }),
-            };
-          }
-        }),
-      );
-
-      toolResults.forEach(({ tool_call_id, content }: { tool_call_id: string; content: string }) => {
-        this.appendMessage({ role: 'tool', tool_call_id, content });
-      });
-
-      const latestMemoryContext = this.memoryStore.formatMemoryContext(['global', 'user', 'site'], this.getIdentity());
-      if (latestMemoryContext !== this.memoryContext) {
-        this.memoryContext = latestMemoryContext;
-        this.rebuildWindow();
-      }
-    }
-
-    return '抱歉，处理轮次过多，请简化您的问题。';
   }
 
   reset(): void {
@@ -321,6 +373,88 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function buildToolProgressSignature(
+  toolCalls: FunctionToolCall[],
+  toolResults: Array<{ tool_call_id: string; content: string }>,
+): string {
+  return JSON.stringify({
+    toolCalls: toolCalls.map((toolCall) => ({
+      id: toolCall.id,
+      name: toolCall.function.name,
+      arguments: toolCall.function.arguments,
+    })),
+    toolResults: toolResults.map((toolResult) => ({
+      tool_call_id: toolResult.tool_call_id,
+      content: toolResult.content,
+    })),
+  });
+}
+
+export function resolveFinalReply(
+  finishReason: string | null,
+  content: string | null,
+): string {
+  if (finishReason === 'length') {
+    return '抱歉，回复长度超限，请缩小问题范围后重试。';
+  }
+
+  if (finishReason === 'content_filter') {
+    return '抱歉，该请求触发了内容限制，无法完整回答。';
+  }
+
+  if (finishReason === 'tool_calls') {
+    return content ?? '';
+  }
+
+  const text = content?.trim();
+  if (text) {
+    return text;
+  }
+
+  return '抱歉，本次没有生成有效回复。';
+}
+
+export function requiresTooling(userText: string): boolean {
+  const text = userText.trim().toLowerCase();
+  if (!text) {
+    return false;
+  }
+
+  const toolKeywords = [
+    '考勤',
+    '巡检',
+    '人数',
+    '出勤',
+    '缺勤',
+    '请假',
+    '迟到',
+    '隐患',
+    '整改',
+    '工地',
+    '现场',
+    '查询',
+    '统计',
+    '数据',
+    '记录',
+    'attendance',
+    'inspection',
+    'report',
+    'count',
+    'site',
+  ];
+
+  return toolKeywords.some((keyword) => text.includes(keyword));
+}
+
+function isToolErrorContent(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    return isRecord(parsed) && typeof parsed['error'] === 'string' && parsed['error'].length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function isRetryableModelError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -361,20 +495,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function serializeMessageContent(message: ChatMessage): string {
   if (message.role === 'tool') {
-    return typeof message.content === 'string'
-      ? message.content
-      : JSON.stringify(message.content);
+    return sanitizeConversationLogContent(
+      typeof message.content === 'string'
+        ? message.content
+        : JSON.stringify(message.content),
+    );
   }
 
   if (typeof message.content === 'string') {
-    return message.content;
+    return sanitizeConversationLogContent(message.content);
   }
 
   if (Array.isArray(message.content)) {
-    return JSON.stringify(message.content);
+    return sanitizeConversationLogContent(JSON.stringify(message.content));
   }
 
-  return JSON.stringify(message);
+  return sanitizeConversationLogContent(JSON.stringify(message));
 }
 
 function normalizeUserContent(
@@ -402,4 +538,18 @@ function normalizeUserContent(
   }
 
   return normalizedParts;
+}
+
+export function sanitizeConversationLogContent(value: string): string {
+  const withoutDataUrls = value.replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, '[image-data]');
+  const masked = withoutDataUrls
+    .replace(/\b1\d{10}\b/g, '[redacted-phone]')
+    .replace(/\b\d{15,18}[0-9Xx]\b/g, '[redacted-id]')
+    .replace(/\b(sk|rk)-[A-Za-z0-9_-]{16,}\b/g, '[redacted-secret]');
+
+  if (masked.length <= 2000) {
+    return masked;
+  }
+
+  return `${masked.slice(0, 2000)}...`;
 }

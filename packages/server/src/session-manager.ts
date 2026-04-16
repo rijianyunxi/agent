@@ -1,4 +1,4 @@
-import { createAgentCore, disposeAgentCore, type AgentCoreOptions, type SmartSiteAgent } from '@agent/core';
+import type { AgentCoreOptions, SmartSiteAgent } from '@agent/core';
 
 export interface SessionInit {
   sessionId: string;
@@ -18,19 +18,26 @@ interface SessionEntry {
   lastAccessAt: number;
   activeRequests: number;
   pending: Promise<void>;
+  userId?: string;
+  userSymbol?: string;
 }
 
 export interface AgentSessionManagerOptions {
   idleTtlMs?: number;
   maxLifetimeMs?: number;
   buildAgentOptions?: (input: SessionInit) => AgentCoreOptions;
+  createAgent?: (options: AgentCoreOptions) => Promise<SmartSiteAgent>;
+  disposeAgent?: (agent: SmartSiteAgent) => Promise<void>;
 }
 
 export class AgentSessionManager {
   private readonly sessions = new Map<string, SessionEntry>();
+  private readonly creatingSessions = new Map<string, Promise<SessionEntry>>();
   private readonly idleTtlMs: number;
   private readonly maxLifetimeMs: number;
   private readonly buildAgentOptions: (input: SessionInit) => AgentCoreOptions;
+  private readonly createAgent: (options: AgentCoreOptions) => Promise<SmartSiteAgent>;
+  private readonly disposeAgent: (agent: SmartSiteAgent) => Promise<void>;
 
   constructor(options: AgentSessionManagerOptions = {}) {
     this.idleTtlMs = options.idleTtlMs ?? 30 * 60 * 1000;
@@ -39,6 +46,8 @@ export class AgentSessionManager {
       ...(input.userId ? { userId: input.userId } : {}),
       ...(input.userSymbol ? { userSymbol: input.userSymbol } : {}),
     }));
+    this.createAgent = options.createAgent ?? createDefaultAgent;
+    this.disposeAgent = options.disposeAgent ?? disposeDefaultAgent;
   }
 
   async runTurn(input: ChatTurnInput): Promise<string> {
@@ -81,7 +90,7 @@ export class AgentSessionManager {
 
     this.sessions.delete(sessionId);
     await this.enqueue(entry, async () => {
-      await disposeAgentCore(entry.agent);
+      await this.disposeAgent(entry.agent);
     });
     return true;
   }
@@ -108,21 +117,53 @@ export class AgentSessionManager {
   private async getOrCreateSession(input: SessionInit): Promise<SessionEntry> {
     const existing = this.sessions.get(input.sessionId);
     if (existing) {
+      this.assertSessionIdentity(existing, input);
       existing.lastAccessAt = Date.now();
       return existing;
     }
 
-    const agent = await createAgentCore(this.buildAgentOptions(input));
-    const now = Date.now();
-    const entry: SessionEntry = {
-      agent,
-      createdAt: now,
-      lastAccessAt: now,
-      activeRequests: 0,
-      pending: Promise.resolve(),
-    };
-    this.sessions.set(input.sessionId, entry);
-    return entry;
+    const creating = this.creatingSessions.get(input.sessionId);
+    if (creating) {
+      const entry = await creating;
+      this.assertSessionIdentity(entry, input);
+      entry.lastAccessAt = Date.now();
+      return entry;
+    }
+
+    const createPromise = (async () => {
+      const agent = await this.createAgent(this.buildAgentOptions(input));
+      const now = Date.now();
+      const entry: SessionEntry = {
+        agent,
+        createdAt: now,
+        lastAccessAt: now,
+        activeRequests: 0,
+        pending: Promise.resolve(),
+        ...(input.userId ? { userId: input.userId } : {}),
+        ...(input.userSymbol ? { userSymbol: input.userSymbol } : {}),
+      };
+      this.sessions.set(input.sessionId, entry);
+      return entry;
+    })();
+
+    this.creatingSessions.set(input.sessionId, createPromise);
+
+    try {
+      return await createPromise;
+    } finally {
+      this.creatingSessions.delete(input.sessionId);
+    }
+  }
+
+  private assertSessionIdentity(entry: SessionEntry, input: SessionInit): void {
+    const entryUserId = entry.userId ?? null;
+    const entryUserSymbol = entry.userSymbol ?? null;
+    const inputUserId = input.userId ?? null;
+    const inputUserSymbol = input.userSymbol ?? null;
+
+    if (entryUserId !== inputUserId || entryUserSymbol !== inputUserSymbol) {
+      throw new Error('session identity mismatch');
+    }
   }
 
   private shouldDisposeSession(entry: SessionEntry, now: number): boolean {
@@ -150,4 +191,14 @@ export class AgentSessionManager {
       release();
     }
   }
+}
+
+async function createDefaultAgent(options: AgentCoreOptions): Promise<SmartSiteAgent> {
+  const { createAgentCore } = await import('@agent/core');
+  return await createAgentCore(options);
+}
+
+async function disposeDefaultAgent(agent: SmartSiteAgent): Promise<void> {
+  const { disposeAgentCore } = await import('@agent/core');
+  await disposeAgentCore(agent);
 }

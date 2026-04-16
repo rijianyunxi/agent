@@ -22,7 +22,14 @@
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev:agent
+```
+
+如果安装后出现 `better-sqlite3` 或 `esbuild` 的原生构建被忽略，需要先批准构建脚本，再重新安装：
+
+```bash
+pnpm approve-builds
+pnpm install --force
 ```
 
 启动前至少需要设置：
@@ -102,15 +109,21 @@ MCP 管理器位于 `packages/mcp/src/manager.ts`，当前通过 stdio 启动 MC
 直接运行：
 
 ```bash
-pnpm dev
+pnpm dev:agent
 ```
 
 输入格式：
 
 - 普通对话：直接输入文本
-- 图片分析：`图片:./site.jpg 这张图有什么风险`
+- 图片分析：`image:./site.jpg 这张图有什么风险`
 - 重置会话：`reset`
 - 退出：`exit`
+
+如果需要启动 HTTP 服务：
+
+```bash
+pnpm dev:server
+```
 
 ## 关键文件
 

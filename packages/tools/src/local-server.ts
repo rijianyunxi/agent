@@ -52,33 +52,41 @@ async function main(): Promise<void> {
   });
 
   let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  let processing = Promise.resolve();
 
-  process.stdin.on('data', async (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
-
-    try {
-      while (true) {
-        const parsedMessage = readNextMessage(buffer);
-        if (!parsedMessage) {
-          break;
-        }
-
-        buffer = parsedMessage.rest;
+  process.stdin.on('data', (chunk: Buffer) => {
+    processing = processing
+      .then(async () => {
+        buffer = Buffer.concat([buffer, chunk]);
 
         try {
-          const request = parseRequestBody(parsedMessage.body);
-          await handleRequest(request, toolMap);
+          while (true) {
+            const parsedMessage = readNextMessage(buffer);
+            if (!parsedMessage) {
+              break;
+            }
+
+            buffer = parsedMessage.rest;
+
+            try {
+              const request = parseRequestBody(parsedMessage.body);
+              await handleRequest(request, toolMap);
+            } catch (error) {
+              const rpcError = toJsonRpcError(error, -32700, 'Invalid JSON-RPC request');
+              const requestId = getRequestIdFromBody(parsedMessage.body);
+              writeError(requestId, rpcError.code, rpcError.message);
+            }
+          }
         } catch (error) {
-          const rpcError = toJsonRpcError(error, -32700, 'Invalid JSON-RPC request');
-          const requestId = getRequestIdFromBody(parsedMessage.body);
-          writeError(requestId, rpcError.code, rpcError.message);
+          const rpcError = toJsonRpcError(error, -32600, 'Malformed stdio frame');
+          buffer = Buffer.alloc(0);
+          writeError(undefined, rpcError.code, rpcError.message);
         }
-      }
-    } catch (error) {
-      const rpcError = toJsonRpcError(error, -32600, 'Malformed stdio frame');
-      buffer = Buffer.alloc(0);
-      writeError(undefined, rpcError.code, rpcError.message);
-    }
+      })
+      .catch((error) => {
+        const rpcError = toJsonRpcError(error, -32002, 'stdin processing error');
+        writeError(undefined, rpcError.code, rpcError.message);
+      });
   });
 
   process.stdin.on('error', (error) => {
