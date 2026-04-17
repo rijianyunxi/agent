@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildToolProgressSignature, requiresTooling, resolveFinalReply, sanitizeConversationLogContent } from '../src/agent.ts';
-import { OllamaRetriever } from '../src/retrieval/ollama-retriever.ts';
+import { getRetrievalCandidates, OllamaRetriever } from '../src/retrieval/ollama-retriever.ts';
 
 const realFetch = globalThis.fetch;
 
@@ -36,6 +36,41 @@ test('retriever retries availability checks after cooldown', async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('getRetrievalCandidates only includes current session conversation logs', () => {
+  const candidates = getRetrievalCandidates({
+    listMemories() {
+      return [{
+        id: 1,
+        sessionId: 'other',
+        userId: 'u1',
+        userSymbol: 'alice',
+        scope: 'user',
+        key: 'user.name',
+        value: 'Alice',
+        createdAt: 1,
+        updatedAt: 1,
+      }];
+    },
+    listConversationLogs(sessionId) {
+      assert.equal(sessionId, 's1');
+      return [{
+        id: 7,
+        sessionId: 's1',
+        userId: 'u1',
+        userSymbol: 'alice',
+        role: 'user',
+        content: 'current session only',
+        timestamp: 1,
+      }];
+    },
+  }, { userId: 'u1', userSymbol: 'alice' }, 's1');
+
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates[0]?.source, 'memory/user/user.name');
+  assert.equal(candidates[1]?.source, 'conversation/user');
+  assert.match(candidates[1]?.content ?? '', /current session only/);
 });
 
 test('buildToolProgressSignature is stable for repeated tool progress', () => {

@@ -1,64 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MemoryStore } from '../src/memory-store.ts';
 
-function createStoreWithFakeDb(existingIds: number[] = []): {
+import { MemoryStore, resolveMemoryIdentity } from '../src/memory-store.ts';
+
+function createStoreWithFakeDb(): {
   store: MemoryStore;
   state: {
-    selectCalls: number;
-    updates: Array<{ sessionId: string; value: string; id: number }>;
-    inserts: Array<{ sessionId: string; scope: string; key: string; value: string }>;
-    deletedIds: number[];
+    runs: Array<{ sql: string; args: unknown[] }>;
   };
 } {
   const state = {
-    selectCalls: 0,
-    updates: [] as Array<{ sessionId: string; value: string; id: number }>,
-    inserts: [] as Array<{ sessionId: string; scope: string; key: string; value: string }>,
-    deletedIds: [] as number[],
+    runs: [] as Array<{ sql: string; args: unknown[] }>,
   };
 
   const fakeDb = {
-    transaction<T>(fn: () => T): () => T {
-      return fn;
-    },
     prepare(sql: string) {
-      if (sql.includes('SELECT id FROM memories')) {
+      if (sql.includes('INSERT INTO memories') || sql.includes('DELETE FROM memories')) {
         return {
-          all() {
-            state.selectCalls += 1;
-            return existingIds.map((id) => ({ id }));
-          },
-        };
-      }
-
-      if (sql.includes('UPDATE memories')) {
-        return {
-          run(sessionId: string, value: string, _timestamp: number, id: number) {
-            state.updates.push({ sessionId, value, id });
-          },
-        };
-      }
-
-      if (sql.includes('DELETE FROM memories WHERE id IN')) {
-        return {
-          run(...ids: number[]) {
-            state.deletedIds.push(...ids);
-          },
-        };
-      }
-
-      if (sql.includes('INSERT INTO memories')) {
-        return {
-          run(
-            sessionId: string,
-            _userId: string | null,
-            _userSymbol: string | null,
-            scope: string,
-            key: string,
-            value: string,
-          ) {
-            state.inserts.push({ sessionId, scope, key, value });
+          run(...args: unknown[]) {
+            state.runs.push({ sql, args });
+            return { changes: 1 };
           },
         };
       }
@@ -73,29 +34,52 @@ function createStoreWithFakeDb(existingIds: number[] = []): {
   return { store, state };
 }
 
-test('upsertMemory updates latest matching row and deletes duplicates for null identity', () => {
-  const { store, state } = createStoreWithFakeDb([5, 4, 3]);
-
-  store.upsertMemory('global', 'site.project_name', '二期工程', 's2');
-
-  assert.equal(state.selectCalls, 1);
-  assert.deepEqual(state.updates, [{ sessionId: 's2', value: '二期工程', id: 5 }]);
-  assert.deepEqual(state.deletedIds, [4, 3]);
-  assert.deepEqual(state.inserts, []);
-});
-
-test('upsertMemory inserts when no matching row exists', () => {
+test('upsertMemory uses ON CONFLICT for shared global memories', () => {
   const { store, state } = createStoreWithFakeDb();
 
-  store.upsertMemory('global', 'site.project_name', '一期工程', 's1');
+  store.upsertMemory('global', 'site.project_name', 'phase-1', 's1', {
+    userId: 'u1',
+    userSymbol: 'alice',
+  });
 
-  assert.equal(state.selectCalls, 1);
-  assert.deepEqual(state.updates, []);
-  assert.deepEqual(state.deletedIds, []);
-  assert.deepEqual(state.inserts, [{
-    sessionId: 's1',
-    scope: 'global',
-    key: 'site.project_name',
-    value: '一期工程',
-  }]);
+  assert.equal(state.runs.length, 1);
+  assert.match(state.runs[0]!.sql, /ON CONFLICT DO UPDATE/);
+  assert.deepEqual(state.runs[0]!.args.slice(0, 6), [
+    's1',
+    null,
+    null,
+    'global',
+    'site.project_name',
+    'phase-1',
+  ]);
+});
+
+test('upsertMemory keeps user identity for non-global scopes', () => {
+  const { store, state } = createStoreWithFakeDb();
+
+  store.upsertMemory('user', 'user.name', 'Alice', 's2', {
+    userId: 'u1',
+    userSymbol: 'alice',
+  });
+
+  assert.equal(state.runs.length, 1);
+  assert.deepEqual(state.runs[0]!.args.slice(0, 6), [
+    's2',
+    'u1',
+    'alice',
+    'user',
+    'user.name',
+    'Alice',
+  ]);
+});
+
+test('resolveMemoryIdentity normalizes global scope to shared identity', () => {
+  assert.deepEqual(resolveMemoryIdentity('global', { userId: 'u1', userSymbol: 'alice' }), {
+    userId: null,
+    userSymbol: null,
+  });
+  assert.deepEqual(resolveMemoryIdentity('site', { userId: 'u1', userSymbol: 'alice' }), {
+    userId: 'u1',
+    userSymbol: 'alice',
+  });
 });

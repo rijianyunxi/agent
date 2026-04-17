@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { mapAppError, normalizeIdentifier, normalizeImageUrl, parseJsonBody } from '../src/app.ts';
+import { mapAppError, normalizeIdentifier, normalizeImageUrl, parseJsonBody, writeSseEvent } from '../src/app.ts';
 
 test('invalid JSON request body returns 400', async () => {
   let invalidJsonError: unknown;
@@ -40,4 +40,30 @@ test('mapAppError keeps explicit 400 payload too large and input errors', () => 
     status: 500,
     body: { error: 'message too long' },
   });
+});
+
+test('mapAppError keeps session identity mismatch mapped to 409', () => {
+  assert.deepEqual(mapAppError(new Error('session identity mismatch')), {
+    status: 409,
+    body: { error: 'session identity mismatch' },
+  });
+});
+
+test('writeSseEvent writes event-stream formatted payload', () => {
+  const chunks: string[] = [];
+  writeSseEvent({
+    res: {
+      write(chunk: string) {
+        chunks.push(chunk);
+      },
+    },
+  } as never, {
+    event: 'reply',
+    data: { sessionId: 's1', reply: 'ok' },
+  });
+
+  assert.deepEqual(chunks, [
+    'event: reply\n',
+    `data: ${JSON.stringify({ sessionId: 's1', reply: 'ok' })}\n\n`,
+  ]);
 });

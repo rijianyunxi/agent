@@ -12,6 +12,11 @@ export interface ChatTurnInput extends SessionInit {
   reset?: boolean;
 }
 
+interface SessionIdentity {
+  userId?: string;
+  userSymbol?: string;
+}
+
 interface SessionEntry {
   agent: SmartSiteAgent;
   createdAt: number;
@@ -69,11 +74,13 @@ export class AgentSessionManager {
     });
   }
 
-  async resetSession(sessionId: string): Promise<boolean> {
+  async resetSession(sessionId: string, identity: SessionIdentity = {}): Promise<boolean> {
     const entry = this.sessions.get(sessionId);
     if (!entry) {
       return false;
     }
+
+    this.assertSessionIdentity(entry, { sessionId, ...identity });
 
     await this.enqueue(entry, async () => {
       entry.lastAccessAt = Date.now();
@@ -82,11 +89,13 @@ export class AgentSessionManager {
     return true;
   }
 
-  async disposeSession(sessionId: string): Promise<boolean> {
+  async disposeSession(sessionId: string, identity: SessionIdentity = {}): Promise<boolean> {
     const entry = this.sessions.get(sessionId);
     if (!entry) {
       return false;
     }
+
+    this.assertSessionIdentity(entry, { sessionId, ...identity });
 
     this.sessions.delete(sessionId);
     await this.enqueue(entry, async () => {

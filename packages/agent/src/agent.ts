@@ -274,7 +274,10 @@ export class SmartSiteAgent {
   }
 
   reset(): void {
+    this.memoryStore.deleteConversationLogsAfter(this.sessionId, null, this.getIdentity());
     this.retrievalContext = null;
+    this.lastToolProgressSignature = null;
+    this.repeatedToolProgressCount = 0;
     this.rebuildWindow();
     this.logger.log('  [agent] Conversation reset');
   }
@@ -292,7 +295,7 @@ export class SmartSiteAgent {
   }
 
   private async refreshRetrievalContext(userText: string): Promise<void> {
-    const results = await this.retriever.retrieve(userText, this.memoryStore, this.getIdentity());
+    const results = await this.retriever.retrieve(userText, this.memoryStore, this.getIdentity(), this.sessionId);
     this.retrievalContext = formatRetrievalContext(results);
     this.rebuildWindow();
   }

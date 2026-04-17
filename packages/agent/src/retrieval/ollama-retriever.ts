@@ -53,6 +53,7 @@ export class OllamaRetriever {
     query: string,
     memoryStore: MemoryStore,
     identity: MemoryIdentity,
+    sessionId?: string,
   ): Promise<RetrievalResult[]> {
     const available = await this.ensureAvailability();
     if (!available) {
@@ -64,7 +65,7 @@ export class OllamaRetriever {
       return [];
     }
 
-    const candidates = getCandidates(memoryStore, identity);
+    const candidates = getRetrievalCandidates(memoryStore, identity, sessionId);
     const scored: RetrievalResult[] = [];
 
     for (const candidate of candidates) {
@@ -206,13 +207,17 @@ export function formatRetrievalContext(results: RetrievalResult[]): string | nul
   return ['[RETRIEVAL_CONTEXT]', 'Relevant retrieved context:', ...lines].join('\n');
 }
 
-function getCandidates(memoryStore: MemoryStore, identity: MemoryIdentity): RetrievalCandidate[] {
+export function getRetrievalCandidates(
+  memoryStore: Pick<MemoryStore, 'listMemories' | 'listConversationLogs'>,
+  identity: MemoryIdentity,
+  sessionId?: string,
+): RetrievalCandidate[] {
   const memories = memoryStore.listMemories(undefined, identity).map((memory) => ({
     id: `memory:${memory.id}`,
     source: `memory/${memory.scope}/${memory.key}`,
     content: `[${memory.scope}] ${memory.key}: ${memory.value}`,
   }));
-  const logs = memoryStore.listConversationLogs(undefined, identity)
+  const logs = memoryStore.listConversationLogs(sessionId, identity)
     .filter((log) => log.role === 'user' || log.role === 'assistant')
     .slice(-120)
     .map((log) => ({

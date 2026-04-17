@@ -339,11 +339,14 @@ class McpServerClient {
     const payload = `Content-Length: ${Buffer.byteLength(message, 'utf8')}\r\n\r\n${message}`;
 
     return await new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(async () => {
+      const timeout = setTimeout(() => {
         this.pending.delete(id);
 
         if (reconnectOnFailure) {
-          await this.reconnect();
+          void this.reconnect().catch((reconnectError) => {
+            const message = reconnectError instanceof Error ? reconnectError.message : String(reconnectError);
+            this.logger.error(`  [mcp:${this.serverName}:reconnect] ${message}`);
+          });
         }
 
         reject(new Error(`MCP request timeout: ${this.serverName} ${method}`));

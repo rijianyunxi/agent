@@ -33,6 +33,8 @@ interface ConversationLogRow {
   timestamp: number;
 }
 
+const DEFAULT_MEMORY_IDENTITY: MemoryIdentity = { userId: null, userSymbol: null };
+
 export class MemoryStore {
   private readonly dbPath: string;
   private db: Database.Database | null = null;
@@ -59,9 +61,6 @@ export class MemoryStore {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
-
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_identity_scope_key
-      ON memories(user_id, user_symbol, scope, key);
 
       CREATE TABLE IF NOT EXISTS conversation_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,9 +89,13 @@ export class MemoryStore {
       this.db.exec('ALTER TABLE conversation_log ADD COLUMN user_symbol TEXT');
     }
 
+    dedupeMemories(this.db);
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_identity_scope_key
       ON memories(user_id, user_symbol, scope, key);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_scope_key_identity_normalized
+      ON memories(scope, key, COALESCE(user_id, ''), COALESCE(user_symbol, ''));
     `);
   }
 
@@ -101,56 +104,43 @@ export class MemoryStore {
     key: string,
     value: string,
     sessionId: string,
-    identity: MemoryIdentity = { userId: null, userSymbol: null },
+    identity: MemoryIdentity = DEFAULT_MEMORY_IDENTITY,
   ): void {
     const db = this.getDb();
+    const effectiveIdentity = resolveMemoryIdentity(scope, identity);
     const timestamp = Date.now();
-    const existingRows = db.prepare(
-      `SELECT id FROM memories
-       WHERE scope = ? AND key = ?
-         AND user_id IS ? AND user_symbol IS ?
-       ORDER BY id DESC`,
-    ).all(scope, key, identity.userId, identity.userSymbol) as Array<{ id: number }>;
 
-    const writeMemory = db.transaction(() => {
-      if (existingRows.length > 0) {
-        const [latest, ...duplicates] = existingRows;
-
-        db.prepare(
-          `UPDATE memories
-           SET session_id = ?, value = ?, updated_at = ?
-           WHERE id = ?`,
-        ).run(sessionId, value, timestamp, latest!.id);
-
-        if (duplicates.length > 0) {
-          const duplicateIds = duplicates.map((row) => row.id);
-          const placeholders = duplicateIds.map(() => '?').join(', ');
-          db.prepare(`DELETE FROM memories WHERE id IN (${placeholders})`).run(...duplicateIds);
-        }
-
-        return;
-      }
-
-      db.prepare(
-        `INSERT INTO memories (session_id, user_id, user_symbol, scope, key, value, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(sessionId, identity.userId, identity.userSymbol, scope, key, value, timestamp, timestamp);
-    });
-
-    writeMemory();
+    db.prepare(
+      `INSERT INTO memories (session_id, user_id, user_symbol, scope, key, value, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO UPDATE SET
+         session_id = excluded.session_id,
+         value = excluded.value,
+         updated_at = excluded.updated_at`,
+    ).run(
+      sessionId,
+      effectiveIdentity.userId,
+      effectiveIdentity.userSymbol,
+      scope,
+      key,
+      value,
+      timestamp,
+      timestamp,
+    );
   }
 
   deleteMemory(
     scope: MemoryScope,
     key: string,
-    identity: MemoryIdentity = { userId: null, userSymbol: null },
+    identity: MemoryIdentity = DEFAULT_MEMORY_IDENTITY,
   ): boolean {
     const db = this.getDb();
+    const effectiveIdentity = resolveMemoryIdentity(scope, identity);
     const result = db.prepare(
       `DELETE FROM memories
        WHERE scope = ? AND key = ?
          AND user_id IS ? AND user_symbol IS ?`,
-    ).run(scope, key, identity.userId, identity.userSymbol);
+    ).run(scope, key, effectiveIdentity.userId, effectiveIdentity.userSymbol);
 
     return result.changes > 0;
   }
@@ -158,32 +148,35 @@ export class MemoryStore {
   getMemory(
     scope: MemoryScope,
     key: string,
-    identity: MemoryIdentity = { userId: null, userSymbol: null },
+    identity: MemoryIdentity = DEFAULT_MEMORY_IDENTITY,
   ): MemoryRecord | null {
     const db = this.getDb();
+    const effectiveIdentity = resolveMemoryIdentity(scope, identity);
     const row = db.prepare(
       `SELECT * FROM memories
        WHERE scope = ? AND key = ?
          AND user_id IS ? AND user_symbol IS ?`,
-    ).get(scope, key, identity.userId, identity.userSymbol) as MemoryRow | undefined;
+    ).get(scope, key, effectiveIdentity.userId, effectiveIdentity.userSymbol) as MemoryRow | undefined;
 
     return row ? mapMemoryRow(row) : null;
   }
 
   listMemories(
     scope?: MemoryScope,
-    identity: MemoryIdentity = { userId: null, userSymbol: null },
+    identity: MemoryIdentity = DEFAULT_MEMORY_IDENTITY,
   ): MemoryRecord[] {
     const db = this.getDb();
+    const scopedIdentity = scope ? resolveMemoryIdentity(scope, identity) : null;
     const rows = scope
       ? (db.prepare(
           `SELECT * FROM memories
            WHERE scope = ? AND user_id IS ? AND user_symbol IS ?
            ORDER BY updated_at DESC, id DESC`,
-        ).all(scope, identity.userId, identity.userSymbol) as MemoryRow[])
+        ).all(scope, scopedIdentity!.userId, scopedIdentity!.userSymbol) as MemoryRow[])
       : (db.prepare(
           `SELECT * FROM memories
-           WHERE user_id IS ? AND user_symbol IS ?
+           WHERE (scope = 'global' AND user_id IS NULL AND user_symbol IS NULL)
+              OR (scope != 'global' AND user_id IS ? AND user_symbol IS ?)
            ORDER BY updated_at DESC, id DESC`,
         ).all(identity.userId, identity.userSymbol) as MemoryRow[]);
 
@@ -269,7 +262,7 @@ export class MemoryStore {
 
   formatMemoryContext(
     scopes: MemoryScope[] = ['global', 'user', 'site'],
-    identity: MemoryIdentity = { userId: null, userSymbol: null },
+    identity: MemoryIdentity = DEFAULT_MEMORY_IDENTITY,
   ): string | null {
     const memories = scopes.flatMap((scope) => this.listMemories(scope, identity));
 
@@ -288,6 +281,34 @@ export class MemoryStore {
 
     return this.db;
   }
+}
+
+export function resolveMemoryIdentity(
+  scope: MemoryScope,
+  identity: MemoryIdentity = DEFAULT_MEMORY_IDENTITY,
+): MemoryIdentity {
+  if (scope === 'global') {
+    return DEFAULT_MEMORY_IDENTITY;
+  }
+
+  return identity;
+}
+
+function dedupeMemories(db: Database.Database): void {
+  db.exec(`
+    DELETE FROM memories
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY scope, key, COALESCE(user_id, ''), COALESCE(user_symbol, '')
+                 ORDER BY updated_at DESC, id DESC
+               ) AS row_num
+        FROM memories
+      ) ranked
+      WHERE ranked.row_num > 1
+    );
+  `);
 }
 
 function mapMemoryRow(row: MemoryRow): MemoryRecord {

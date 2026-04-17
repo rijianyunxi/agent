@@ -23,6 +23,11 @@ const MAX_IMAGE_URL_LENGTH = 1024 * 1024;
 const MAX_MESSAGE_LENGTH = 4000;
 const SAFE_ID_PATTERN = /^[a-zA-Z0-9._:-]+$/;
 
+interface StreamEvent {
+  event: 'session' | 'reply' | 'done' | 'error';
+  data: Record<string, unknown>;
+}
+
 export function createServerApp(options: ServerAppOptions = {}): { app: Koa; sessionManager: AgentSessionManager } {
   const sessionManager = options.sessionManager ?? new AgentSessionManager();
   const app = new Koa();
@@ -76,22 +81,11 @@ export function createServerApp(options: ServerAppOptions = {}): { app: Koa; ses
         const sessionId = isRecord(payload)
           ? normalizeIdentifier(payload['sessionId'], 'sessionId')
           : null;
-
-        if (!sessionId) {
-          ctx.status = 400;
-          ctx.body = { error: 'sessionId is required' };
-          return;
-        }
-
-        const reset = await sessionManager.resetSession(sessionId);
-        ctx.body = { sessionId, reset };
-        return;
-      }
-
-      if (ctx.method === 'POST' && ctx.path === '/session/close') {
-        const payload = await readJsonBody(ctx);
-        const sessionId = isRecord(payload)
-          ? normalizeIdentifier(payload['sessionId'], 'sessionId')
+        const userId = isRecord(payload)
+          ? normalizeIdentifier(payload['userId'], 'userId')
+          : null;
+        const userSymbol = isRecord(payload)
+          ? normalizeIdentifier(payload['userSymbol'], 'userSymbol')
           : null;
 
         if (!sessionId) {
@@ -100,7 +94,84 @@ export function createServerApp(options: ServerAppOptions = {}): { app: Koa; ses
           return;
         }
 
-        const closed = await sessionManager.disposeSession(sessionId);
+        const reset = await sessionManager.resetSession(sessionId, {
+          ...(userId ? { userId } : {}),
+          ...(userSymbol ? { userSymbol } : {}),
+        });
+        ctx.body = { sessionId, reset };
+        return;
+      }
+
+      if (ctx.method === 'POST' && ctx.path === '/chat/stream') {
+        const payload = await readJsonBody(ctx);
+        const body = isChatBody(payload) ? payload : {};
+
+        if (!body.message?.trim()) {
+          ctx.status = 400;
+          ctx.body = { error: 'message is required' };
+          return;
+        }
+
+        if (body.message.length > MAX_MESSAGE_LENGTH) {
+          ctx.status = 400;
+          ctx.body = { error: 'message too long' };
+          return;
+        }
+
+        const sessionId = normalizeIdentifier(body.sessionId, 'sessionId') ?? randomUUID();
+        const userId = normalizeIdentifier(body.userId, 'userId');
+        const userSymbol = normalizeIdentifier(body.userSymbol, 'userSymbol');
+        const imageUrl = normalizeImageUrl(body.imageUrl);
+
+        prepareSseResponse(ctx);
+        writeSseEvent(ctx, { event: 'session', data: { sessionId } });
+
+        try {
+          const reply = await sessionManager.runTurn({
+            sessionId,
+            message: body.message,
+            ...(imageUrl ? { imageUrl } : {}),
+            ...(userId ? { userId } : {}),
+            ...(userSymbol ? { userSymbol } : {}),
+            ...(typeof body.reset === 'boolean' ? { reset: body.reset } : {}),
+          });
+
+          writeSseEvent(ctx, { event: 'reply', data: { sessionId, reply } });
+          writeSseEvent(ctx, { event: 'done', data: { sessionId } });
+        } catch (error) {
+          const mapped = mapAppError(error);
+          writeSseEvent(ctx, {
+            event: 'error',
+            data: { sessionId, error: mapped.body.error, status: mapped.status },
+          });
+        } finally {
+          ctx.res.end();
+        }
+        return;
+      }
+
+      if (ctx.method === 'POST' && ctx.path === '/session/close') {
+        const payload = await readJsonBody(ctx);
+        const sessionId = isRecord(payload)
+          ? normalizeIdentifier(payload['sessionId'], 'sessionId')
+          : null;
+        const userId = isRecord(payload)
+          ? normalizeIdentifier(payload['userId'], 'userId')
+          : null;
+        const userSymbol = isRecord(payload)
+          ? normalizeIdentifier(payload['userSymbol'], 'userSymbol')
+          : null;
+
+        if (!sessionId) {
+          ctx.status = 400;
+          ctx.body = { error: 'sessionId is required' };
+          return;
+        }
+
+        const closed = await sessionManager.disposeSession(sessionId, {
+          ...(userId ? { userId } : {}),
+          ...(userSymbol ? { userSymbol } : {}),
+        });
         ctx.body = { sessionId, closed };
         return;
       }
@@ -265,4 +336,20 @@ export function normalizeImageUrl(value: unknown): string | null {
   }
 
   throw new InvalidInputError('invalid imageUrl');
+}
+
+export function prepareSseResponse(ctx: Koa.Context): void {
+  ctx.req.setTimeout(0);
+  ctx.respond = false;
+  ctx.res.statusCode = 200;
+  ctx.res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  ctx.res.setHeader('Cache-Control', 'no-cache, no-transform');
+  ctx.res.setHeader('Connection', 'keep-alive');
+  ctx.res.setHeader('X-Accel-Buffering', 'no');
+  ctx.res.flushHeaders?.();
+}
+
+export function writeSseEvent(ctx: Koa.Context, payload: StreamEvent): void {
+  ctx.res.write(`event: ${payload.event}\n`);
+  ctx.res.write(`data: ${JSON.stringify(payload.data)}\n\n`);
 }

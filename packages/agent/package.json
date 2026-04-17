@@ -4,11 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./cli": "./src/main.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
@@ -17,7 +15,6 @@
     "@agent/memory": "workspace:*",
     "@agent/shared": "workspace:*",
     "@agent/tools": "workspace:*",
-    "dotenv": "^17.4.2",
     "openai": "^6.34.0"
   }
 }

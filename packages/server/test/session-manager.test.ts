@@ -66,3 +66,32 @@ test('session identity mismatch is rejected', async () => {
     /session identity mismatch/,
   );
 });
+
+test('resetSession and disposeSession enforce session identity', async () => {
+  const manager = new AgentSessionManager({
+    async createAgent() {
+      return createFakeAgent('agent') as never;
+    },
+    async disposeAgent() {},
+  });
+
+  await manager.runTurn({
+    sessionId: 's1',
+    userId: 'u1',
+    userSymbol: 'alice',
+    message: 'hello',
+  });
+
+  await assert.rejects(
+    () => manager.resetSession('s1', { userId: 'u2', userSymbol: 'bob' }),
+    /session identity mismatch/,
+  );
+
+  await assert.rejects(
+    () => manager.disposeSession('s1', { userId: 'u2', userSymbol: 'bob' }),
+    /session identity mismatch/,
+  );
+
+  assert.equal(await manager.resetSession('s1', { userId: 'u1', userSymbol: 'alice' }), true);
+  assert.equal(await manager.disposeSession('s1', { userId: 'u1', userSymbol: 'alice' }), true);
+});

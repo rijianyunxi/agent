@@ -4,7 +4,6 @@ export {
   createAgentCore,
   disposeAgentCore,
   ensureApiKey,
-  parseInput,
   resolveAgentOptions,
 } from './main.ts';
-export type { AgentCoreOptions, ParsedInput } from './main.ts';
+export type { AgentCoreOptions } from './main.ts';
