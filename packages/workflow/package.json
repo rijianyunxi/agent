@@ -1,21 +1,20 @@
 {
-  "name": "@agent/server",
+  "name": "@agent/workflow",
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "dev": "tsx src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {
-    "@agent/core": "workspace:*",
     "@agent/shared": "workspace:*",
-    "@agent/workflow": "workspace:*",
-    "dotenv": "^17.4.2",
-    "koa": "^2.16.2"
+    "better-sqlite3": "^12.9.0"
   },
   "devDependencies": {
-    "@types/koa": "^2.15.0"
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

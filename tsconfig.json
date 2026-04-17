@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/memory" },
+    { "path": "./packages/workflow" },
     { "path": "./packages/tools" },
     { "path": "./packages/mcp" },
     { "path": "./packages/agent" },

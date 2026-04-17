@@ -2,7 +2,17 @@ import { randomUUID } from 'node:crypto';
 
 import Koa from 'koa';
 
+import {
+  ApprovalRequestNotFoundError,
+  ApprovalRequestResolvedError,
+  WorkflowDefinitionNotFoundError,
+  WorkflowInstanceNotFoundError,
+  WorkflowManager,
+  WorkflowStateError,
+} from '@agent/workflow';
+
 import { AgentSessionManager } from './session-manager.ts';
+import { WORKFLOW_TEST_PAGE_HTML } from './workflow-test-page.ts';
 
 interface ChatBody {
   sessionId?: string;
@@ -15,6 +25,7 @@ interface ChatBody {
 
 export interface ServerAppOptions {
   sessionManager?: AgentSessionManager;
+  workflowManager?: WorkflowManager;
 }
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -28,14 +39,21 @@ interface StreamEvent {
   data: Record<string, unknown>;
 }
 
-export function createServerApp(options: ServerAppOptions = {}): { app: Koa; sessionManager: AgentSessionManager } {
+export function createServerApp(options: ServerAppOptions = {}): { app: Koa; sessionManager: AgentSessionManager; workflowManager?: WorkflowManager } {
   const sessionManager = options.sessionManager ?? new AgentSessionManager();
+  const workflowManager = options.workflowManager;
   const app = new Koa();
 
   app.use(async (ctx) => {
     try {
       if (ctx.method === 'GET' && ctx.path === '/health') {
         ctx.body = { ok: true };
+        return;
+      }
+
+      if (ctx.method === 'GET' && ctx.path === '/workflow-test') {
+        ctx.type = 'html';
+        ctx.body = WORKFLOW_TEST_PAGE_HTML;
         return;
       }
 
@@ -176,6 +194,90 @@ export function createServerApp(options: ServerAppOptions = {}): { app: Koa; ses
         return;
       }
 
+      if (ctx.method === 'POST' && ctx.path === '/workflows/start') {
+        if (!workflowManager) {
+          ctx.status = 503;
+          ctx.body = { error: 'workflow manager unavailable' };
+          return;
+        }
+
+        const payload = await readJsonBody(ctx);
+        if (!isRecord(payload) || typeof payload['workflowName'] !== 'string' || !payload['workflowName'].trim()) {
+          ctx.status = 400;
+          ctx.body = { error: 'workflowName is required' };
+          return;
+        }
+
+        const workflowName = payload['workflowName'].trim();
+        const input = isRecord(payload['input']) ? payload['input'] : undefined;
+        const context = isRecord(payload['context']) ? payload['context'] : undefined;
+        const snapshot = await workflowManager.startWorkflow({
+          workflowName,
+          ...(input ? { input } : {}),
+          ...(context ? { context } : {}),
+        });
+        ctx.body = snapshot;
+        return;
+      }
+
+      if (ctx.method === 'POST' && ctx.path === '/workflows/approval/resume') {
+        if (!workflowManager) {
+          ctx.status = 503;
+          ctx.body = { error: 'workflow manager unavailable' };
+          return;
+        }
+
+        const payload = await readJsonBody(ctx);
+        if (!isRecord(payload)) {
+          ctx.status = 400;
+          ctx.body = { error: 'approvalRequestId is required' };
+          return;
+        }
+
+        const approvalRequestId = normalizeIdentifier(payload['approvalRequestId'], 'approvalRequestId');
+        if (!approvalRequestId) {
+          ctx.status = 400;
+          ctx.body = { error: 'approvalRequestId is required' };
+          return;
+        }
+
+        if (typeof payload['approved'] !== 'boolean') {
+          ctx.status = 400;
+          ctx.body = { error: 'approved must be boolean' };
+          return;
+        }
+
+        const actor = normalizeOptionalString(payload['actor']);
+        const comment = normalizeOptionalString(payload['comment']);
+        const snapshot = await workflowManager.resumeApproval({
+          approvalRequestId,
+          approved: payload['approved'],
+          ...(actor ? { actor } : {}),
+          ...(comment ? { comment } : {}),
+        });
+        ctx.body = snapshot;
+        return;
+      }
+
+      if (ctx.method === 'GET' && ctx.path.startsWith('/workflows/')) {
+        if (!workflowManager) {
+          ctx.status = 503;
+          ctx.body = { error: 'workflow manager unavailable' };
+          return;
+        }
+
+        const instanceId = normalizeIdentifier(decodeURIComponent(ctx.path.slice('/workflows/'.length)), 'instanceId');
+        if (!instanceId) {
+          ctx.status = 400;
+          ctx.body = { error: 'instanceId is required' };
+          return;
+        }
+
+        const snapshot = workflowManager.getWorkflow(instanceId);
+        ctx.body = snapshot;
+        return;
+      }
+
       ctx.status = 404;
       ctx.body = { error: 'Not Found' };
     } catch (error) {
@@ -185,7 +287,7 @@ export function createServerApp(options: ServerAppOptions = {}): { app: Koa; ses
     }
   });
 
-  return { app, sessionManager };
+  return { app, sessionManager, ...(workflowManager ? { workflowManager } : {}) };
 }
 
 async function readJsonBody(ctx: Koa.Context): Promise<unknown> {
@@ -255,6 +357,20 @@ export function mapAppError(error: unknown): {
     };
   }
 
+  if (error instanceof WorkflowDefinitionNotFoundError || error instanceof WorkflowInstanceNotFoundError || error instanceof ApprovalRequestNotFoundError) {
+    return {
+      status: 404,
+      body: { error: error.message },
+    };
+  }
+
+  if (error instanceof ApprovalRequestResolvedError || error instanceof WorkflowStateError) {
+    return {
+      status: 409,
+      body: { error: error.message },
+    };
+  }
+
   const message = error instanceof Error ? error.message : String(error);
   if (message === 'session identity mismatch') {
     return {
@@ -302,6 +418,19 @@ export function normalizeIdentifier(value: unknown, fieldName: string): string |
   }
 
   return trimmed;
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw new InvalidInputError('invalid string field');
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 export function normalizeImageUrl(value: unknown): string | null {
