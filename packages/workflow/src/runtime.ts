@@ -5,6 +5,7 @@ import type { Logger } from '@agent/shared';
 import { WorkflowStore } from './store.ts';
 import type {
   ApprovalPayload,
+  ApprovalRequestRecord,
   ResumeApprovalInput,
   StartWorkflowInput,
   WorkflowCompensationResult,
@@ -57,7 +58,6 @@ export class WorkflowManager {
   constructor(options: WorkflowManagerOptions = {}) {
     this.definitions = new Map((options.definitions ?? []).map((definition) => [definition.name, definition]));
     this.store = options.store ?? new WorkflowStore();
-    const _logger = options.logger ?? console;
     this.store.initialize();
   }
 
@@ -105,9 +105,9 @@ export class WorkflowManager {
       ...(input.comment ? { comment: input.comment } : {}),
     };
 
-    const updatedApproval = {
+    const updatedApproval: ApprovalRequestRecord = {
       ...approval,
-      status: (input.approved ? 'approved' : 'rejected') as const,
+      status: input.approved ? 'approved' : 'rejected',
       decision,
       decidedAt: Date.now(),
     };
@@ -332,13 +332,19 @@ export class WorkflowManager {
     });
 
     const definition = this.getDefinition(instance.workflowName);
-    const completedSteps = this.store.listSteps(instance.id)
-      .filter((step) => step.status === 'completed')
+    const compensationTargets = this.store.listSteps(instance.id)
+      .filter((step) => {
+        if (step.status === 'completed') {
+          return true;
+        }
+
+        return step.stepId === failedStepDefinition.id && step.status === 'failed';
+      })
       .reverse();
 
     let currentInstance = this.requireInstance(instance.id);
 
-    for (const step of completedSteps) {
+    for (const step of compensationTargets) {
       const stepDefinition = this.getStepDefinition(definition, step.stepId);
       if (!stepDefinition.compensate) {
         continue;

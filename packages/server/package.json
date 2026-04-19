@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/main.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --experimental-transform-types src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test test/**/*.test.ts"
+    "test": "node --disable-warning=ExperimentalWarning --experimental-transform-types --test test/**/*.test.ts"
   },
   "dependencies": {
     "@agent/core": "workspace:*",

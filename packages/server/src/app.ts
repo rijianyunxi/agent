@@ -12,7 +12,7 @@ import {
 } from '@agent/workflow';
 
 import { AgentSessionManager } from './session-manager.ts';
-import { WORKFLOW_TEST_PAGE_HTML } from './workflow-test-page.ts';
+import { BUSINESS_TEST_PAGE_HTML } from './workflow-test-page.ts';
 
 interface ChatBody {
   sessionId?: string;
@@ -51,9 +51,9 @@ export function createServerApp(options: ServerAppOptions = {}): { app: Koa; ses
         return;
       }
 
-      if (ctx.method === 'GET' && ctx.path === '/workflow-test') {
+      if (ctx.method === 'GET' && (ctx.path === '/test' || ctx.path === '/workflow-test')) {
         ctx.type = 'html';
-        ctx.body = WORKFLOW_TEST_PAGE_HTML;
+        ctx.body = BUSINESS_TEST_PAGE_HTML;
         return;
       }
 

@@ -1,9 +1,14 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
 
 import { demoApprovalWorkflow, inspectionRectificationWorkflow, WorkflowManager } from '@agent/workflow';
 
 import { createServerApp } from './app.ts';
 import { AgentSessionManager } from './session-manager.ts';
+
+loadEnv({
+  path: fileURLToPath(new URL('../../../.env', import.meta.url)),
+});
 
 const port = Number.parseInt(process.env['PORT'] ?? '3000', 10);
 const sessionIdleTtlMs = Number.parseInt(process.env['SESSION_IDLE_TTL_MS'] ?? `${30 * 60 * 1000}`, 10);

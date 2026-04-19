@@ -1,5 +1,6 @@
 import { MemoryStore } from '@agent/memory';
 import type { Tool } from '@agent/shared';
+import { pathToFileURL } from 'node:url';
 
 import { attendanceTool } from './attendance.ts';
 import { inspectionTool } from './inspection.ts';
@@ -266,4 +267,18 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-main();
+function isDirectExecution(): boolean {
+  const entry = process.argv[1];
+  if (!entry) {
+    return false;
+  }
+
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isDirectExecution()) {
+  void main().catch((error) => {
+    console.error('[local-mcp]', error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

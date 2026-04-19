@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test test/**/*.test.ts"
+    "test": "node --disable-warning=ExperimentalWarning --experimental-transform-types --test test/**/*.test.ts"
   },
   "dependencies": {
     "@agent/mcp": "workspace:*",

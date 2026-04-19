@@ -32,9 +32,6 @@ importers:
       '@agent/tools':
         specifier: workspace:*
         version: link:../tools
-      dotenv:
-        specifier: ^17.4.2
-        version: 17.4.2
       openai:
         specifier: ^6.34.0
         version: 6.34.0
@@ -72,6 +69,9 @@ importers:
       '@agent/shared':
         specifier: workspace:*
         version: link:../shared
+      '@agent/workflow':
+        specifier: workspace:*
+        version: link:../workflow
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -97,6 +97,19 @@ importers:
       '@agent/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/workflow:
+    dependencies:
+      '@agent/shared':
+        specifier: workspace:*
+        version: link:../shared
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
 
 packages:
 
