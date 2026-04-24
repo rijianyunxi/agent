@@ -47,6 +47,9 @@ AGENT_USER_ID=u001
 AGENT_USER_SYMBOL=zhangsan
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_EMBED_MODEL=bge-m3
+RETRIEVAL_TOP_K=5
+RETRIEVAL_MIN_SCORE=0.35
+RETRIEVAL_EMBED_CONCURRENCY=4
 MCP_CONFIG_PATH=./mcp.servers.json
 MEMORY_DB_PATH=./memory.db
 SESSION_IDLE_TTL_MS=1800000
@@ -69,6 +72,8 @@ session 相关变量说明：
 - 如果本地 Ollama 不可用，则自动关闭检索。
 - 如果 Ollama 可用但没有 `bge-m3` 或 `bge-m3:*` 这类模型，也会自动关闭检索。
 - 只有在可用时，才会把记忆和历史对话做向量召回，并将结果作为额外 system context 注入。
+- embedding 结果会写入 memory DB 的 `embedding_cache` 表，后续重启或新 agent 实例可以复用。
+- 候选内容 embedding 会按 `RETRIEVAL_EMBED_CONCURRENCY` 限流并发执行；失败结果带退避时间，避免短暂故障污染长期缓存。
 
 这意味着你不需要为“没装模型”的环境额外改代码，直接跑即可。
 

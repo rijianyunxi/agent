@@ -33,7 +33,36 @@ interface ConversationLogRow {
   timestamp: number;
 }
 
+interface EmbeddingCacheRow {
+  model: string;
+  content_hash: string;
+  content: string;
+  embedding_json: string | null;
+  status: EmbeddingCacheStatus;
+  error: string | null;
+  failure_count: number;
+  retry_after: number | null;
+  created_at: number;
+  updated_at: number;
+  last_used_at: number;
+}
+
 const DEFAULT_MEMORY_IDENTITY: MemoryIdentity = { userId: null, userSymbol: null };
+export type EmbeddingCacheStatus = 'ready' | 'failed';
+
+export interface EmbeddingCacheRecord {
+  model: string;
+  contentHash: string;
+  content: string;
+  embedding: number[] | null;
+  status: EmbeddingCacheStatus;
+  error: string | null;
+  failureCount: number;
+  retryAfter: number | null;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt: number;
+}
 
 export class MemoryStore {
   private readonly dbPath: string;
@@ -71,6 +100,21 @@ export class MemoryStore {
         content TEXT NOT NULL,
         timestamp INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS embedding_cache (
+        model TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        content TEXT NOT NULL,
+        embedding_json TEXT,
+        status TEXT NOT NULL,
+        error TEXT,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        retry_after INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_used_at INTEGER NOT NULL,
+        PRIMARY KEY (model, content_hash)
+      );
     `);
 
     const memoryColumns = this.db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>;
@@ -97,6 +141,77 @@ export class MemoryStore {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_scope_key_identity_normalized
       ON memories(scope, key, COALESCE(user_id, ''), COALESCE(user_symbol, ''));
     `);
+  }
+
+  getEmbeddingCache(model: string, contentHash: string): EmbeddingCacheRecord | null {
+    const db = this.getDb();
+    const row = db.prepare(
+      `SELECT * FROM embedding_cache
+       WHERE model = ? AND content_hash = ?`,
+    ).get(model, contentHash) as EmbeddingCacheRow | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    const now = Date.now();
+    db.prepare(
+      `UPDATE embedding_cache
+       SET last_used_at = ?
+       WHERE model = ? AND content_hash = ?`,
+    ).run(now, model, contentHash);
+
+    return mapEmbeddingCacheRow({
+      ...row,
+      last_used_at: now,
+    });
+  }
+
+  upsertReadyEmbedding(model: string, contentHash: string, content: string, embedding: number[]): void {
+    const db = this.getDb();
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO embedding_cache (
+        model, content_hash, content, embedding_json, status, error, failure_count, retry_after,
+        created_at, updated_at, last_used_at
+      ) VALUES (?, ?, ?, ?, 'ready', NULL, 0, NULL, ?, ?, ?)
+      ON CONFLICT(model, content_hash) DO UPDATE SET
+        content = excluded.content,
+        embedding_json = excluded.embedding_json,
+        status = 'ready',
+        error = NULL,
+        failure_count = 0,
+        retry_after = NULL,
+        updated_at = excluded.updated_at,
+        last_used_at = excluded.last_used_at`,
+    ).run(model, contentHash, content, JSON.stringify(embedding), now, now, now);
+  }
+
+  upsertFailedEmbedding(
+    model: string,
+    contentHash: string,
+    content: string,
+    error: string,
+    failureCount: number,
+    retryAfter: number,
+  ): void {
+    const db = this.getDb();
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO embedding_cache (
+        model, content_hash, content, embedding_json, status, error, failure_count, retry_after,
+        created_at, updated_at, last_used_at
+      ) VALUES (?, ?, ?, NULL, 'failed', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(model, content_hash) DO UPDATE SET
+        content = excluded.content,
+        embedding_json = NULL,
+        status = 'failed',
+        error = excluded.error,
+        failure_count = excluded.failure_count,
+        retry_after = excluded.retry_after,
+        updated_at = excluded.updated_at,
+        last_used_at = excluded.last_used_at`,
+    ).run(model, contentHash, content, error, failureCount, retryAfter, now, now, now);
   }
 
   upsertMemory(
@@ -335,4 +450,37 @@ function mapConversationLogRow(row: ConversationLogRow): ConversationLogRecord {
     content: row.content,
     timestamp: row.timestamp,
   };
+}
+
+function mapEmbeddingCacheRow(row: EmbeddingCacheRow): EmbeddingCacheRecord {
+  return {
+    model: row.model,
+    contentHash: row.content_hash,
+    content: row.content,
+    embedding: parseEmbeddingJson(row.embedding_json),
+    status: row.status,
+    error: row.error,
+    failureCount: row.failure_count,
+    retryAfter: row.retry_after,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at,
+  };
+}
+
+function parseEmbeddingJson(raw: string | null): number[] | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'number')) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
 }
