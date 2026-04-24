@@ -77,7 +77,7 @@ interface McpGetPromptResult {
 }
 
 export class McpManager {
-  private static readonly defaultConfigPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../mcp.servers.json');
+  private static readonly defaultConfigPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../mcp.servers.json');
   private readonly configPath: string;
   private readonly logger: Logger;
   private readonly runtimeServers: RuntimeMcpServer[];
@@ -177,7 +177,13 @@ export class McpManager {
     try {
       const raw = await readFile(this.configPath, 'utf8');
       return JSON.parse(raw) as McpConfigFile;
-    } catch {
+    } catch (error) {
+      if (isNodeError(error) && error.code === 'ENOENT') {
+        return { servers: {} };
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`  [mcp:config:error] ${this.configPath}`, message);
       return { servers: {} };
     }
   }
@@ -512,6 +518,10 @@ function sanitizeToolName(value: string): string {
 
 function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }
 
 async function sleep(ms: number): Promise<void> {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { demoApprovalWorkflow, inspectionRectificationWorkflow, WorkflowManager } from '../src/index.ts';
+import type { WorkflowDefinition } from '../src/index.ts';
 
 test('workflow waits for approval and resumes to completion', async () => {
   const manager = new WorkflowManager({
@@ -121,6 +122,76 @@ test('inspection rectification workflow compensates created task when notificati
   assert.equal(resumed.instance.status, 'rolled_back');
   assert.equal(resumed.instance.context['taskStatus'], 'cancelled');
   assert.equal(resumed.instance.context['notificationStatus'], 'recalled');
+
+  manager.close();
+});
+
+test('workflow marks thrown step errors as failed state', async () => {
+  const throwingWorkflow: WorkflowDefinition = {
+    name: 'throwing-workflow',
+    steps: [
+      {
+        id: 'explode',
+        async run() {
+          throw new Error('unexpected step failure');
+        },
+      },
+    ],
+  };
+  const manager = new WorkflowManager({
+    definitions: [throwingWorkflow],
+  });
+
+  const snapshot = await manager.startWorkflow({
+    workflowName: 'throwing-workflow',
+  });
+
+  assert.equal(snapshot.instance.status, 'failed');
+  assert.equal(snapshot.instance.error, 'unexpected step failure');
+  assert.equal(snapshot.steps[0]?.status, 'failed');
+  assert.equal(snapshot.steps[0]?.error, 'unexpected step failure');
+  assert.equal(snapshot.events.at(-1)?.type, 'workflow.failed');
+
+  manager.close();
+});
+
+test('workflow marks thrown resume errors as failed state', async () => {
+  const throwingResumeWorkflow: WorkflowDefinition = {
+    name: 'throwing-resume-workflow',
+    steps: [
+      {
+        id: 'approval',
+        async run() {
+          return {
+            type: 'await_approval' as const,
+            payload: {
+              title: 'Approval Required',
+              message: 'Approve this',
+            },
+          };
+        },
+        async resume() {
+          throw new Error('unexpected resume failure');
+        },
+      },
+    ],
+  };
+  const manager = new WorkflowManager({
+    definitions: [throwingResumeWorkflow],
+  });
+
+  const started = await manager.startWorkflow({
+    workflowName: 'throwing-resume-workflow',
+  });
+  const snapshot = await manager.resumeApproval({
+    approvalRequestId: started.approvals[0]!.id,
+    approved: true,
+  });
+
+  assert.equal(snapshot.instance.status, 'failed');
+  assert.equal(snapshot.instance.error, 'unexpected resume failure');
+  assert.equal(snapshot.steps[0]?.status, 'failed');
+  assert.equal(snapshot.steps[0]?.error, 'unexpected resume failure');
 
   manager.close();
 });

@@ -41,6 +41,8 @@ OPENAI_API_KEY=your-api-key
 可选环境变量：
 
 ```bash
+AGENT_MODEL=gpt-5.4
+OPENAI_BASE_URL=https://ai.letus.lol/v1
 AGENT_USER_ID=u001
 AGENT_USER_SYMBOL=zhangsan
 OLLAMA_BASE_URL=http://127.0.0.1:11434
@@ -79,7 +81,7 @@ MCP 管理器位于 `packages/mcp/src/manager.ts`，当前通过 stdio 启动 MC
 
 使用方式：
 
-1. 复制 `mcp.servers.example.json` 为 `mcp.servers.json`
+1. 复制项目根目录的 `mcp.servers.example.json` 为 `mcp.servers.json`
 2. 填入你的 MCP server 启动命令
 3. 下一轮对话时 agent 会自动重载配置
 
@@ -87,12 +89,12 @@ MCP 管理器位于 `packages/mcp/src/manager.ts`，当前通过 stdio 启动 MC
 
 ```json
 {
-  servers: {
-    example: {
-      command: node,
-      args: [./path/to/mcp-server.js],
-      cwd: .,
-      enabled: true
+  "servers": {
+    "example": {
+      "command": "node",
+      "args": ["./path/to/mcp-server.js"],
+      "cwd": ".",
+      "enabled": true
     }
   }
 }

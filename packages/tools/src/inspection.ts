@@ -1,5 +1,9 @@
 import type { InspectionRecord, InspectionSummary, Tool } from '@agent/shared';
 
+import { validateOptionalDate, validateOptionalEnum } from './validation.ts';
+
+const INSPECTION_STATUSES = ['合格', '不合格', '待整改'] as const;
+
 export function getTodayInLocalTimezone(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: process.env['TZ'],
@@ -56,8 +60,8 @@ export const inspectionTool: Tool = {
     },
   },
   async execute(input: Record<string, unknown>): Promise<string> {
-    const date = input['date'] as string | undefined;
-    const status = input['status'] as string | undefined;
+    const date = validateOptionalDate(input['date']);
+    const status = validateOptionalEnum(input['status'], 'status', INSPECTION_STATUSES);
     const summary = queryInspection(date, status);
     return JSON.stringify(summary, null, 2);
   },

@@ -1,5 +1,7 @@
 import type { AttendanceRecord, AttendanceSummary, Tool } from '@agent/shared';
 
+import { validateOptionalDate } from './validation.ts';
+
 export function getTodayInLocalTimezone(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: process.env['TZ'],
@@ -58,7 +60,7 @@ export const attendanceTool: Tool = {
     },
   },
   async execute(input: Record<string, unknown>): Promise<string> {
-    const date = input['date'] as string | undefined;
+    const date = validateOptionalDate(input['date']);
     const summary = queryAttendance(date);
     return JSON.stringify(summary, null, 2);
   },

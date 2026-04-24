@@ -23,6 +23,8 @@ export interface SmartSiteAgentOptions {
   maxWindowMessages?: number;
   userId?: string;
   userSymbol?: string;
+  model?: string;
+  openaiBaseUrl?: string;
   modelTimeoutMs?: number;
   modelMaxRetries?: number;
 }
@@ -34,10 +36,11 @@ interface ToolRegistry {
 
 export class SmartSiteAgent {
   private client: OpenAI;
-  private model = 'gpt-5.4';
+  private readonly model: string;
   private maxIterations: number;
   private readonly modelTimeoutMs: number;
   private readonly modelMaxRetries: number;
+  private readonly memoryDbPath: string;
   private logger: Logger;
   private readonly memoryStore: MemoryStore;
   private readonly window: SlidingWindow;
@@ -65,12 +68,12 @@ export class SmartSiteAgent {
     this.maxIterations = options.maxIterations ?? 10;
     this.modelTimeoutMs = options.modelTimeoutMs ?? 30000;
     this.modelMaxRetries = options.modelMaxRetries ?? 2;
+    this.model = options.model ?? process.env['AGENT_MODEL'] ?? 'gpt-5.4';
+    this.memoryDbPath = path.resolve(options.memoryDbPath ?? process.env['MEMORY_DB_PATH'] ?? 'memory.db');
     this.logger = options.logger ?? console;
     this.userId = options.userId ?? null;
     this.userSymbol = options.userSymbol ?? null;
-    this.memoryStore = options.memoryDbPath
-      ? new MemoryStore({ dbPath: options.memoryDbPath })
-      : new MemoryStore();
+    this.memoryStore = new MemoryStore({ dbPath: this.memoryDbPath });
     this.window = new SlidingWindow({
       maxMessages: options.maxWindowMessages ?? 40,
     });
@@ -85,7 +88,7 @@ export class SmartSiteAgent {
             args: [fileURLToPath(LOCAL_MCP_SERVER_ENTRY)],
             cwd: path.dirname(fileURLToPath(LOCAL_MCP_SERVER_ENTRY)),
             env: {
-              ...(process.env['MEMORY_DB_PATH'] ? { MEMORY_DB_PATH: process.env['MEMORY_DB_PATH'] } : {}),
+              MEMORY_DB_PATH: this.memoryDbPath,
               ...(this.userId ? { AGENT_USER_ID: this.userId } : {}),
               ...(this.userSymbol ? { AGENT_USER_SYMBOL: this.userSymbol } : {}),
               LOCAL_MCP_SESSION_ID: this.sessionId,
@@ -96,7 +99,7 @@ export class SmartSiteAgent {
       ],
     });
     this.client = new OpenAI({
-      baseURL: 'https://ai.letus.lol/v1',
+      baseURL: options.openaiBaseUrl ?? process.env['OPENAI_BASE_URL'] ?? 'https://ai.letus.lol/v1',
       apiKey: process.env['OPENAI_API_KEY'],
     });
   }

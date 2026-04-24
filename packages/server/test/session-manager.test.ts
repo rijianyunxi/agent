@@ -95,3 +95,48 @@ test('resetSession and disposeSession enforce session identity', async () => {
   assert.equal(await manager.resetSession('s1', { userId: 'u1', userSymbol: 'alice' }), true);
   assert.equal(await manager.disposeSession('s1', { userId: 'u1', userSymbol: 'alice' }), true);
 });
+
+test('idle cleanup disposes identity-bound sessions internally', async () => {
+  let disposeCount = 0;
+  const manager = new AgentSessionManager({
+    idleTtlMs: 0,
+    async createAgent() {
+      return createFakeAgent('agent') as never;
+    },
+    async disposeAgent() {
+      disposeCount += 1;
+    },
+  });
+
+  await manager.runTurn({
+    sessionId: 's1',
+    userId: 'u1',
+    userSymbol: 'alice',
+    message: 'hello',
+  });
+
+  assert.equal(await manager.disposeIdleSessions(), 1);
+  assert.equal(disposeCount, 1);
+});
+
+test('shutdown disposes identity-bound sessions internally', async () => {
+  let disposeCount = 0;
+  const manager = new AgentSessionManager({
+    async createAgent() {
+      return createFakeAgent('agent') as never;
+    },
+    async disposeAgent() {
+      disposeCount += 1;
+    },
+  });
+
+  await manager.runTurn({
+    sessionId: 's1',
+    userId: 'u1',
+    userSymbol: 'alice',
+    message: 'hello',
+  });
+
+  await manager.shutdown();
+  assert.equal(disposeCount, 1);
+});

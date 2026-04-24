@@ -51,3 +51,27 @@ test('inspection default date uses local timezone instead of UTC day', async () 
     process.env['TZ'] = previousTz;
   }
 });
+
+test('attendance rejects invalid date arguments', async () => {
+  await assert.rejects(
+    () => attendanceTool.execute({ date: '2026-02-30' }),
+    /date 必须是有效的 YYYY-MM-DD 日期/,
+  );
+
+  await assert.rejects(
+    () => attendanceTool.execute({ date: 20260416 }),
+    /date 必须是 YYYY-MM-DD 格式的字符串/,
+  );
+});
+
+test('inspection rejects invalid date and status arguments', async () => {
+  await assert.rejects(
+    () => inspectionTool.execute({ date: '2026/04/16' }),
+    /date 必须是有效的 YYYY-MM-DD 日期/,
+  );
+
+  await assert.rejects(
+    () => inspectionTool.execute({ status: '已关闭' }),
+    /status 只支持/,
+  );
+});

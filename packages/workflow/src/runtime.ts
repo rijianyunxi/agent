@@ -119,11 +119,19 @@ export class WorkflowManager {
       ...(decision.actor ? { actor: decision.actor } : {}),
     });
 
-    const result = await this.resolveResumeResult(
-      stepDefinition,
-      this.buildStepContext(instance, stepRecord),
-      input,
-    );
+    let result: WorkflowStepResumeResult;
+    try {
+      result = await this.resolveResumeResult(
+        stepDefinition,
+        this.buildStepContext(instance, stepRecord),
+        input,
+      );
+    } catch (error) {
+      result = {
+        type: 'failed',
+        error: formatWorkflowError(error),
+      };
+    }
 
     await this.handleStepResult(instance, stepDefinition, stepRecord, result);
     const nextInstance = this.requireInstance(instance.id);
@@ -158,7 +166,15 @@ export class WorkflowManager {
       const definition = this.getDefinition(instance.workflowName);
       const stepDefinition = this.getStepDefinition(definition, currentStepId);
       const stepRecord = this.beginStep(instance.id, currentStepId);
-      const result = await stepDefinition.run(this.buildStepContext(instance, stepRecord));
+      let result: WorkflowStepRunResult;
+      try {
+        result = await stepDefinition.run(this.buildStepContext(instance, stepRecord));
+      } catch (error) {
+        result = {
+          type: 'failed',
+          error: formatWorkflowError(error),
+        };
+      }
       await this.handleStepResult(instance, stepDefinition, stepRecord, result);
     }
   }
@@ -536,4 +552,8 @@ export class WorkflowManager {
 
 function normalizeCompensationResult(result: WorkflowCompensationResult | void): Record<string, unknown> {
   return result?.contextPatch ?? {};
+}
+
+function formatWorkflowError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

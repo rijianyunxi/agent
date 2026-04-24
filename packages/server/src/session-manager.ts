@@ -96,30 +96,25 @@ export class AgentSessionManager {
     }
 
     this.assertSessionIdentity(entry, { sessionId, ...identity });
-
-    this.sessions.delete(sessionId);
-    await this.enqueue(entry, async () => {
-      await this.disposeAgent(entry.agent);
-    });
+    await this.disposeSessionEntry(sessionId, entry);
     return true;
   }
 
   async disposeIdleSessions(now = Date.now()): Promise<number> {
     const expired = [...this.sessions.entries()]
-      .filter(([, entry]) => this.shouldDisposeSession(entry, now))
-      .map(([sessionId]) => sessionId);
+      .filter(([, entry]) => this.shouldDisposeSession(entry, now));
 
-    await Promise.all(expired.map(async (sessionId) => {
-      await this.disposeSession(sessionId);
+    await Promise.all(expired.map(async ([sessionId, entry]) => {
+      await this.disposeSessionEntry(sessionId, entry);
     }));
 
     return expired.length;
   }
 
   async shutdown(): Promise<void> {
-    const sessionIds = [...this.sessions.keys()];
-    await Promise.all(sessionIds.map(async (sessionId) => {
-      await this.disposeSession(sessionId);
+    const entries = [...this.sessions.entries()];
+    await Promise.all(entries.map(async ([sessionId, entry]) => {
+      await this.disposeSessionEntry(sessionId, entry);
     }));
   }
 
@@ -183,6 +178,17 @@ export class AgentSessionManager {
     const idleExpired = now - entry.lastAccessAt >= this.idleTtlMs;
     const lifetimeExpired = now - entry.createdAt >= this.maxLifetimeMs;
     return idleExpired || lifetimeExpired;
+  }
+
+  private async disposeSessionEntry(sessionId: string, entry: SessionEntry): Promise<void> {
+    if (this.sessions.get(sessionId) !== entry) {
+      return;
+    }
+
+    this.sessions.delete(sessionId);
+    await this.enqueue(entry, async () => {
+      await this.disposeAgent(entry.agent);
+    });
   }
 
   private async enqueue<T>(entry: SessionEntry, task: () => Promise<T>): Promise<T> {
